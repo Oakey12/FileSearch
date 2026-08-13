@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"file-search/internal/mainFunc"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -19,13 +21,23 @@ import (
 )
 
 type searchResult struct {
-	Matches []string
+	Matches []fileMatch
 	Skipped int
+}
+
+type fileMatch struct {
+	Path     string
+	Name     string
+	Type     string
+	Size     int64
+	Modified time.Time
+	Folder   string
 }
 
 func main() {
 	application := app.NewWithID("ru.filesearch.desktop")
 	application.Settings().SetTheme(theme.DarkTheme())
+
 	window := application.NewWindow("Поиск файлов")
 	window.Resize(fyne.NewSize(900, 600))
 	window.CenterOnScreen()
@@ -39,42 +51,48 @@ func main() {
 	status := widget.NewLabel("Выберите папку и введите имя файла")
 	status.Wrapping = fyne.TextWrapWord
 
-	var matches []string
+	var matches []fileMatch
 	selectedIndex := -1
 	searchGeneration := 0
+	var cancelSearch context.CancelFunc
 
-	resultList := widget.NewList(
-		func() int { return len(matches) },
+	resultTable := widget.NewTable(
+		func() (int, int) { return len(matches) + 1, 5 },
 		func() fyne.CanvasObject {
 			label := widget.NewLabel("")
 			label.Truncation = fyne.TextTruncateEllipsis
 			return label
 		},
-		func(id widget.ListItemID, object fyne.CanvasObject) {
-			if id < 0 || id >= len(matches) {
-				return
-			}
-			object.(*widget.Label).SetText(fmt.Sprintf("%d. %s", id+1, matches[id]))
+		func(id widget.TableCellID, object fyne.CanvasObject) {
+			label := object.(*widget.Label)
+			label.TextStyle = fyne.TextStyle{Bold: id.Row == 0}
+			label.SetText(resultCellText(matches, id.Row, id.Col))
 		},
 	)
+	resultTable.SetColumnWidth(0, 210)
+	resultTable.SetColumnWidth(1, 70)
+	resultTable.SetColumnWidth(2, 90)
+	resultTable.SetColumnWidth(3, 145)
+	resultTable.SetColumnWidth(4, 330)
 
 	openButton := widget.NewButton("Показать в Проводнике", nil)
 	previewButton := widget.NewButton("Предпросмотр файла", nil)
 	openButton.Disable()
+	previewButton.Disable()
 
 	previewButton.OnTapped = func() {
 		if selectedIndex < 0 || selectedIndex >= len(matches) {
 			return
 		}
 
-		showPreview(window, matches[selectedIndex])
+		showPreview(window, matches[selectedIndex].Path)
 	}
 
 	openButton.OnTapped = func() {
 		if selectedIndex < 0 || selectedIndex >= len(matches) {
 			return
 		}
-		path := matches[selectedIndex]
+		path := matches[selectedIndex].Path
 		selected, err := mainFunc.ShowInExplorer(path)
 		if err != nil {
 			dialog.ShowError(err, window)
@@ -87,14 +105,18 @@ func main() {
 		}
 	}
 
-	resultList.OnSelected = func(id widget.ListItemID) {
-		selectedIndex = id
+	resultTable.OnSelected = func(id widget.TableCellID) {
+		if id.Row == 0 {
+			resultTable.Unselect(id)
+			return
+		}
+		selectedIndex = id.Row - 1
 		previewButton.Enable()
 		openButton.Enable()
 	}
 
-	resultList.OnUnselected = func(id widget.ListItemID) {
-		if selectedIndex == id {
+	resultTable.OnUnselected = func(id widget.TableCellID) {
+		if selectedIndex == id.Row-1 {
 			selectedIndex = -1
 			previewButton.Disable()
 			openButton.Disable()
@@ -112,6 +134,16 @@ func main() {
 			}
 		}, window)
 	})
+
+	cancelButton := widget.NewButton("Отмена поиска", func() {
+		if cancelSearch == nil {
+			return
+		}
+		cancelSearch()
+		cancelSearch = nil
+		status.SetText("Отмена поиска…")
+	})
+	cancelButton.Disable()
 
 	searchButton := widget.NewButton("Найти", nil)
 	searchButton.Importance = widget.HighImportance
@@ -139,24 +171,34 @@ func main() {
 		}
 
 		folderEntry.SetText(absoluteRoot)
+		if cancelSearch != nil {
+			cancelSearch()
+		}
+		searchContext, cancel := context.WithCancel(context.Background())
+		cancelSearch = cancel
 		searchGeneration++
 		currentSearch := searchGeneration
 		searchButton.Disable()
 		chooseFolderButton.Disable()
+		cancelButton.Enable()
 		openButton.Disable()
 		previewButton.Disable()
-		resultList.UnselectAll()
-		status.SetText("Идёт поиск…")
+		resultTable.UnselectAll()
+		status.SetText("Идёт поиск.")
+		startSearchAnimation(searchContext, currentSearch, func() int { return searchGeneration }, status)
 
 		go func() {
-			result, searchErr := findFiles(absoluteRoot, query)
+			result, searchErr := findFiles(searchContext, absoluteRoot, query)
 			fyne.Do(func() {
 				if currentSearch != searchGeneration {
 					return
 				}
+				cancel()
+				cancelSearch = nil
 				searchButton.Enable()
 				chooseFolderButton.Enable()
-				if searchErr != nil {
+				cancelButton.Disable()
+				if searchErr != nil && !errors.Is(searchErr, context.Canceled) {
 					status.SetText("Поиск завершился с ошибкой")
 					dialog.ShowError(searchErr, window)
 					return
@@ -164,8 +206,10 @@ func main() {
 
 				matches = result.Matches
 				selectedIndex = -1
-				resultList.Refresh()
-				if len(matches) == 0 {
+				resultTable.Refresh()
+				if errors.Is(searchErr, context.Canceled) {
+					status.SetText(fmt.Sprintf("Поиск отменён · найдено файлов: %d", len(matches)))
+				} else if len(matches) == 0 {
 					status.SetText("Файлы не найдены")
 				} else {
 					status.SetText(fmt.Sprintf("Найдено файлов: %d", len(matches)))
@@ -178,9 +222,14 @@ func main() {
 	}
 
 	newSearchButton := widget.NewButton("Новый поиск", func() {
+		if cancelSearch != nil {
+			cancelSearch()
+			cancelSearch = nil
+		}
 		searchGeneration++
 		searchButton.Enable()
 		chooseFolderButton.Enable()
+		cancelButton.Disable()
 
 		folderEntry.SetText("")
 		nameEntry.SetText("")
@@ -188,8 +237,8 @@ func main() {
 		matches = nil
 		selectedIndex = -1
 
-		resultList.UnselectAll()
-		resultList.Refresh()
+		resultTable.UnselectAll()
+		resultTable.Refresh()
 
 		previewButton.Disable()
 		openButton.Disable()
@@ -205,7 +254,7 @@ func main() {
 		container.NewBorder(nil, nil, nil, chooseFolderButton, folderEntry),
 		widget.NewLabelWithStyle("Имя файла", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		nameEntry,
-		container.NewHBox(searchButton, newSearchButton),
+		container.NewHBox(searchButton, newSearchButton, layout.NewSpacer(), cancelButton),
 		widget.NewSeparator(),
 		status,
 	)
@@ -216,15 +265,18 @@ func main() {
 		openButton,
 	)
 
-	window.SetContent(container.NewBorder(form, actions, nil, nil, resultList))
+	window.SetContent(container.NewBorder(form, actions, nil, nil, resultTable))
 	window.ShowAndRun()
 }
 
-func findFiles(root, query string) (searchResult, error) {
+func findFiles(ctx context.Context, root, query string) (searchResult, error) {
 	var result searchResult
 	needle := strings.ToLower(query)
 
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			result.Skipped++
 			if entry != nil && entry.IsDir() {
@@ -236,12 +288,75 @@ func findFiles(root, query string) (searchResult, error) {
 			return nil
 		}
 		if strings.Contains(strings.ToLower(entry.Name()), needle) {
-			result.Matches = append(result.Matches, path)
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				result.Skipped++
+				return nil
+			}
+			extension := strings.TrimPrefix(strings.ToLower(filepath.Ext(entry.Name())), ".")
+			if extension == "" {
+				extension = "файл"
+			}
+			result.Matches = append(result.Matches, fileMatch{
+				Path: path, Name: entry.Name(), Type: extension,
+				Size: info.Size(), Modified: info.ModTime(), Folder: filepath.Dir(path),
+			})
 		}
 		return nil
 	})
-	if err != nil && !errors.Is(err, fs.ErrPermission) {
-		return result, err
+	if errors.Is(err, fs.ErrPermission) {
+		return result, nil
 	}
-	return result, nil
+	return result, err
+}
+
+func resultCellText(matches []fileMatch, row, column int) string {
+	headers := []string{"Имя", "Тип", "Размер", "Изменён", "Папка"}
+	if row == 0 {
+		if column >= 0 && column < len(headers) {
+			return headers[column]
+		}
+		return ""
+	}
+	index := row - 1
+	if index < 0 || index >= len(matches) {
+		return ""
+	}
+	match := matches[index]
+	switch column {
+	case 0:
+		return match.Name
+	case 1:
+		return match.Type
+	case 2:
+		return formatFileSize(match.Size)
+	case 3:
+		return match.Modified.Format("02.01.2006 15:04")
+	case 4:
+		return match.Folder
+	default:
+		return ""
+	}
+}
+
+func startSearchAnimation(ctx context.Context, generation int, currentGeneration func() int, status *widget.Label) {
+	go func() {
+		ticker := time.NewTicker(450 * time.Millisecond)
+		defer ticker.Stop()
+		dots := 1
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				dots = dots%3 + 1
+				text := "Идёт поиск" + strings.Repeat(".", dots)
+				fyne.Do(func() {
+					if generation == currentGeneration() && ctx.Err() == nil {
+						status.SetText(text)
+					}
+				})
+			}
+		}
+	}()
 }
