@@ -81,7 +81,7 @@ func main() {
 	window.CenterOnScreen()
 
 	folderEntry := widget.NewEntry()
-	folderEntry.SetPlaceHolder(`Например: G:\РЕГЛАМЕНТЫ IT-отдела`)
+	folderEntry.SetPlaceHolder(`Например: G:\РЕГЛАМЕНТЫ`)
 
 	nameEntry := widget.NewEntry()
 	nameEntry.SetPlaceHolder("Полное имя файла или его часть")
