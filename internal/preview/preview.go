@@ -1,9 +1,10 @@
-package main
+package preview
 
 import (
 	"archive/zip"
 	"encoding/xml"
 	"errors"
+	"file-search/internal/varAndConst"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -24,17 +25,24 @@ import (
 )
 
 const (
-	maxPreviewSize = 1024 * 1024
-	maxExcelRows   = 500
-	maxExcelCols   = 50
+	maxExcelRows = 500
+	maxExcelCols = 50
+
+	// PreviewWindowX и PreviewWindowY задают начальное положение окна
+	// предпросмотра в пикселях от левого верхнего угла основного монитора.
+	// Измените эти два значения, чтобы настроить положение окна.
+	PreviewWindowX int32 = 350
+	PreviewWindowY int32 = 400
 )
 
 // showPreview создаёт отдельное окно ОС, которое можно перемещать независимо.
-func showPreview(_ fyne.Window, path string) {
-	previewWindow := fyne.CurrentApp().NewWindow("Предпросмотр: " + filepath.Base(path))
+func ShowPreview(_ fyne.Window, path string) {
+	title := "Предпросмотр: " + filepath.Base(path)
+	previewWindow := fyne.CurrentApp().NewWindow(title)
 	previewWindow.Resize(fyne.NewSize(850, 600))
 	previewWindow.SetContent(container.NewCenter(widget.NewLabel("Загрузка предпросмотра…")))
 	previewWindow.Show()
+	go moveWindowByTitle(title, PreviewWindowX, PreviewWindowY)
 
 	go func() {
 		preview, err := createPreview(path)
@@ -105,7 +113,7 @@ func createTextPreview(path string) (fyne.CanvasObject, error) {
 }
 
 func createDOCXPreview(path string) (fyne.CanvasObject, error) {
-	text, truncated, err := extractDOCXText(path, maxPreviewSize)
+	text, truncated, err := extractDOCXText(path, varAndConst.MaxPreviewSize)
 	if err != nil {
 		return nil, err
 	}
@@ -311,13 +319,13 @@ func readLimitedText(path string) (string, bool, error) {
 	}
 	defer file.Close()
 
-	data, err := io.ReadAll(io.LimitReader(file, maxPreviewSize+1))
+	data, err := io.ReadAll(io.LimitReader(file, varAndConst.MaxPreviewSize+1))
 	if err != nil {
 		return "", false, err
 	}
-	truncated := len(data) > maxPreviewSize
+	truncated := len(data) > varAndConst.MaxPreviewSize
 	if truncated {
-		data = data[:maxPreviewSize]
+		data = data[:varAndConst.MaxPreviewSize]
 	}
 	return string(data), truncated, nil
 }
@@ -337,7 +345,7 @@ func createFileInfoPreview(path string, info os.FileInfo, reason string) fyne.Ca
 	}
 	message := fmt.Sprintf(
 		"%s\n\nИмя: %s\nТип: %s\nРазмер: %s\nИзменён: %s\n\nПуть:\n%s",
-		reason, info.Name(), extension, formatFileSize(info.Size()),
+		reason, info.Name(), extension, FormatFileSize(info.Size()),
 		info.ModTime().Format("02.01.2006 15:04:05"), path,
 	)
 	label := widget.NewLabel(message)
@@ -345,7 +353,7 @@ func createFileInfoPreview(path string, info os.FileInfo, reason string) fyne.Ca
 	return container.NewVScroll(label)
 }
 
-func formatFileSize(size int64) string {
+func FormatFileSize(size int64) string {
 	const (
 		kilobyte = 1024
 		megabyte = kilobyte * 1024

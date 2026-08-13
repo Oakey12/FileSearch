@@ -1,6 +1,6 @@
 //go:build windows
 
-package mainFunc
+package shell
 
 import (
 	"file-search/internal/varAndConst"

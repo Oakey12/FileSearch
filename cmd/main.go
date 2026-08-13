@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"errors"
-	"file-search/internal/mainFunc"
+	"file-search/internal/preview"
+	"file-search/internal/shell"
 	"fmt"
 	"io/fs"
 	"os"
@@ -34,6 +35,43 @@ type fileMatch struct {
 	Folder   string
 }
 
+func calculateColumnWidth(matches []fileMatch, column int) float32 {
+	const (
+		minWidth = float32(70)
+		maxWidth = float32(600)
+		padding  = float32(30)
+	)
+
+	width := fyne.MeasureText(
+		resultCellText(nil, 0, column),
+		theme.TextSize(),
+		fyne.TextStyle{Bold: true},
+	).Width + padding
+
+	for row := range matches {
+		text := resultCellText(matches, row+1, column)
+
+		textWidth := fyne.MeasureText(
+			text,
+			theme.TextSize(),
+			fyne.TextStyle{},
+		).Width + padding
+
+		if textWidth > width {
+			width = textWidth
+		}
+	}
+
+	if width < minWidth {
+		return minWidth
+	}
+	if width > maxWidth {
+		return maxWidth
+	}
+
+	return width
+}
+
 func main() {
 	application := app.NewWithID("ru.filesearch.desktop")
 	application.Settings().SetTheme(theme.DarkTheme())
@@ -56,8 +94,12 @@ func main() {
 	searchGeneration := 0
 	var cancelSearch context.CancelFunc
 
-	resultTable := widget.NewTable(
-		func() (int, int) { return len(matches) + 1, 5 },
+	var resultTable *widget.Table
+
+	resultTable = widget.NewTable(
+		func() (int, int) {
+			return len(matches) + 1, 5
+		},
 		func() fyne.CanvasObject {
 			label := widget.NewLabel("")
 			label.Truncation = fyne.TextTruncateEllipsis
@@ -65,7 +107,10 @@ func main() {
 		},
 		func(id widget.TableCellID, object fyne.CanvasObject) {
 			label := object.(*widget.Label)
-			label.TextStyle = fyne.TextStyle{Bold: id.Row == 0}
+
+			label.TextStyle = fyne.TextStyle{
+				Bold: id.Row == 0,
+			}
 			label.SetText(resultCellText(matches, id.Row, id.Col))
 		},
 	)
@@ -85,7 +130,7 @@ func main() {
 			return
 		}
 
-		showPreview(window, matches[selectedIndex].Path)
+		preview.ShowPreview(window, matches[selectedIndex].Path)
 	}
 
 	openButton.OnTapped = func() {
@@ -93,7 +138,7 @@ func main() {
 			return
 		}
 		path := matches[selectedIndex].Path
-		selected, err := mainFunc.ShowInExplorer(path)
+		selected, err := shell.ShowInExplorer(path)
 		if err != nil {
 			dialog.ShowError(err, window)
 			return
@@ -105,9 +150,26 @@ func main() {
 		}
 	}
 
+	var lastHeaderClick time.Time
+	lastHeaderColumn := -1
+
 	resultTable.OnSelected = func(id widget.TableCellID) {
 		if id.Row == 0 {
+			now := time.Now()
+			doubleClick := id.Col == lastHeaderColumn &&
+				!lastHeaderClick.IsZero() &&
+				now.Sub(lastHeaderClick) <= 500*time.Millisecond
+
+			lastHeaderClick = now
+			lastHeaderColumn = id.Col
 			resultTable.Unselect(id)
+
+			if doubleClick {
+				width := calculateColumnWidth(matches, id.Col)
+				resultTable.SetColumnWidth(id.Col, width)
+				lastHeaderClick = time.Time{}
+				lastHeaderColumn = -1
+			}
 			return
 		}
 		selectedIndex = id.Row - 1
@@ -124,15 +186,22 @@ func main() {
 	}
 
 	chooseFolderButton := widget.NewButton("Выбрать папку…", func() {
-		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
-			if err != nil {
-				dialog.ShowError(err, window)
-				return
-			}
-			if uri != nil {
-				folderEntry.SetText(uri.Path())
-			}
-		}, window)
+		folderDialog := dialog.NewFolderOpen(
+			func(uri fyne.ListableURI, err error) {
+				if err != nil {
+					dialog.ShowError(err, window)
+					return
+				}
+
+				if uri != nil {
+					folderEntry.SetText(uri.Path())
+				}
+			},
+			window,
+		)
+
+		folderDialog.Resize(fyne.NewSize(900, 650))
+		folderDialog.Show()
 	})
 
 	cancelButton := widget.NewButton("Отмена поиска", func() {
@@ -329,7 +398,7 @@ func resultCellText(matches []fileMatch, row, column int) string {
 	case 1:
 		return match.Type
 	case 2:
-		return formatFileSize(match.Size)
+		return preview.FormatFileSize(match.Size)
 	case 3:
 		return match.Modified.Format("02.01.2006 15:04")
 	case 4:
