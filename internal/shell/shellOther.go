@@ -16,3 +16,5 @@ func PickFolder(owner uintptr, title, initialDir string) (string, error) {
 func ShowInExplorer(path string) (bool, error) {
 	return false, errUnsupported
 }
+
+func SetDarkTitleBar(hwnd uintptr) {}

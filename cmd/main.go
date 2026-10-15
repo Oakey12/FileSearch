@@ -5,6 +5,8 @@ import (
 	"errors"
 	"file-search/internal/preview"
 	"file-search/internal/shell"
+	"file-search/internal/uiTheme"
+	"file-search/internal/update"
 	"fmt"
 	"io/fs"
 	"os"
@@ -74,9 +76,10 @@ func calculateColumnWidth(matches []fileMatch, column int) float32 {
 
 func main() {
 	application := app.NewWithID("ru.filesearch.desktop")
-	application.Settings().SetTheme(theme.DarkTheme())
+	application.Settings().SetTheme(uiTheme.Dark())
+	update.CleanupOld()
 
-	window := application.NewWindow("Поиск файлов")
+	window := application.NewWindow("Поиск файлов " + update.CurrentVersion)
 	window.Resize(fyne.NewSize(900, 600))
 	window.CenterOnScreen()
 
@@ -185,24 +188,27 @@ func main() {
 		}
 	}
 
-	chooseFolderButton := widget.NewButton("Выбрать папку…", func() {
-		folderDialog := dialog.NewFolderOpen(
-			func(uri fyne.ListableURI, err error) {
-				if err != nil {
+	chooseFolderButton := widget.NewButton("Выбрать папку…", nil)
+	chooseFolderButton.OnTapped = func() {
+		owner := shell.WindowHandle(window)
+		initialDir := strings.Trim(strings.TrimSpace(folderEntry.Text), "\"")
+		chooseFolderButton.Disable()
+
+		// Стандартное окно Windows «Выбор папки» блокирует поток до закрытия.
+		go func() {
+			path, err := shell.PickFolder(owner, "Папка для поиска", initialDir)
+			fyne.Do(func() {
+				chooseFolderButton.Enable()
+				switch {
+				case errors.Is(err, shell.ErrCancelled):
+				case err != nil:
 					dialog.ShowError(err, window)
-					return
+				default:
+					folderEntry.SetText(path)
 				}
-
-				if uri != nil {
-					folderEntry.SetText(uri.Path())
-				}
-			},
-			window,
-		)
-
-		folderDialog.Resize(fyne.NewSize(900, 650))
-		folderDialog.Show()
-	})
+			})
+		}()
+	}
 
 	cancelButton := widget.NewButton("Отмена поиска", func() {
 		if cancelSearch == nil {
@@ -329,13 +335,16 @@ func main() {
 	)
 
 	actions := container.NewHBox(
+		newUpdateControls(application, window),
 		layout.NewSpacer(),
 		previewButton,
 		openButton,
 	)
 
 	window.SetContent(container.NewBorder(form, actions, nil, nil, resultTable))
-	window.ShowAndRun()
+	window.Show()
+	uiTheme.DarkTitleBar(window)
+	application.Run()
 }
 
 func findFiles(ctx context.Context, root, query string) (searchResult, error) {

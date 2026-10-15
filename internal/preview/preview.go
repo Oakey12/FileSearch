@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"encoding/xml"
 	"errors"
+	"file-search/internal/uiTheme"
 	"file-search/internal/varAndConst"
 	"fmt"
 	"image"
@@ -42,6 +43,7 @@ func ShowPreview(_ fyne.Window, path string) {
 	previewWindow.Resize(fyne.NewSize(850, 600))
 	previewWindow.SetContent(container.NewCenter(widget.NewLabel("Загрузка предпросмотра…")))
 	previewWindow.Show()
+	uiTheme.DarkTitleBar(previewWindow)
 	go moveWindowByTitle(title, PreviewWindowX, PreviewWindowY)
 
 	go func() {
@@ -330,12 +332,13 @@ func readLimitedText(path string) (string, bool, error) {
 	return string(data), truncated, nil
 }
 
+// newReadOnlyText показывает текст файла чёрным на белом фоне. Текст можно
+// выделить и скопировать, но не изменить.
 func newReadOnlyText(text string) fyne.CanvasObject {
-	entry := widget.NewMultiLineEntry()
-	entry.SetText(text)
-	entry.Wrapping = fyne.TextWrapOff
-	entry.Disable()
-	return entry
+	label := widget.NewLabel(text)
+	label.Wrapping = fyne.TextWrapOff
+	label.Selectable = true
+	return uiTheme.Paper(container.NewScroll(label))
 }
 
 func createFileInfoPreview(path string, info os.FileInfo, reason string) fyne.CanvasObject {
