@@ -35,7 +35,20 @@ var textExtensions = map[string]bool{
 	".c": true, ".h": true, ".cpp": true, ".php": true, ".sh": true,
 }
 
+// isOLEFile — файл начинается с сигнатуры составного документа (.md 1С 7.7).
+func isOLEFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	head := make([]byte, 8)
+	n, _ := io.ReadFull(f, head)
+	return onec.IsOLE(head[:n])
+}
+
 // IsText сообщает, что файл — обычный текст (по расширению).
+// .md — Markdown, если это не конфигурация 1С 7.7 (её отличает Extract).
 func IsText(path string) bool {
 	return textExtensions[strings.ToLower(filepath.Ext(path))]
 }
@@ -43,7 +56,7 @@ func IsText(path string) bool {
 // Searchable сообщает, умеет ли пакет доставать текст из файла.
 func Searchable(path string) bool {
 	switch ext := strings.ToLower(filepath.Ext(path)); ext {
-	case ".docx", ".xlsx", ".xlsm", ".pptx", ".pdf", ".epf", ".erf", ".ert":
+	case ".docx", ".xlsx", ".xlsm", ".pptx", ".pdf", ".epf", ".erf", ".ert", ".cf", ".cfe", ".md":
 		return true
 	default:
 		return textExtensions[ext]
@@ -69,8 +82,17 @@ func Extract(path string, limit int) (text string, err error) {
 		text, err = zipText(path, limit, isSlidePart, xmlElementText("t"))
 	case ".pdf":
 		text, err = pdfText(path, limit)
-	case ".epf", ".erf", ".ert":
-		// Внешние обработки и отчёты 1С — текст всех модулей.
+	case ".epf", ".erf", ".ert", ".cf", ".cfe", ".md":
+		// Файлы 1С — текст всех модулей. Чужие .md (Markdown) не пройдут проверку
+		// формата в onec.Open — для них ниже читается обычный текст.
+		if ext == ".md" && !isOLEFile(path) {
+			var ok bool
+			text, _, ok, err = ReadText(path, limit)
+			if err == nil && !ok {
+				err = errors.New("двоичный файл")
+			}
+			break
+		}
 		if text, err = onec.ExtractText(path); err == nil && len(text) > limit {
 			text = string(trimPartialRune([]byte(text[:limit])))
 		}

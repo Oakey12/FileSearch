@@ -52,6 +52,10 @@ type App struct {
 
 	updateMu sync.Mutex
 	release  *update.Release
+
+	onecMu   sync.Mutex
+	onecPath string
+	onecFile *onec.File // последний открытый в декодере файл
 }
 
 const maxFiles = 32
@@ -234,20 +238,46 @@ func (a *App) fileMiddleware(next http.Handler) http.Handler {
 
 // --- Декодер 1С ----------------------------------------------------------
 
-var onecFilters = []runtime.FileFilter{{DisplayName: "Обработки и отчёты 1С (*.epf, *.erf, *.ert)", Pattern: "*.epf;*.erf;*.ert"}}
+var onecFilters = []runtime.FileFilter{
+	{DisplayName: "Файлы 1С (*.epf, *.erf, *.cf, *.cfe, *.ert, *.md)", Pattern: "*.epf;*.erf;*.cf;*.cfe;*.ert;*.md"},
+	{DisplayName: "1С:Предприятие 8 (*.epf, *.erf, *.cf, *.cfe)", Pattern: "*.epf;*.erf;*.cf;*.cfe"},
+	{DisplayName: "1С:Предприятие 7.7 (*.ert, *.md)", Pattern: "*.ert;*.md"},
+}
 
 // PickOneCFile открывает стандартное окно выбора файла обработки или отчёта 1С.
 func (a *App) PickOneCFile() (string, error) {
 	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{Title: "Открыть обработку или отчёт 1С", Filters: onecFilters})
 }
 
-// OpenOneC разбирает .epf/.erf (1С 8) или .ert (1С 7.7) и возвращает модули и формы.
+// OpenOneC разбирает файл 1С (.epf, .erf, .cf, .cfe — 1С 8; .ert, .md — 1С 7.7)
+// и возвращает список модулей и форм. Тексты — через OneCSectionText.
 func (a *App) OpenOneC(path string) (onec.Document, error) {
 	f, err := onec.Open(path)
 	if err != nil {
 		return onec.Document{}, err
 	}
-	return f.Doc, nil
+	a.onecMu.Lock()
+	a.onecPath, a.onecFile = path, f // держим только последний открытый файл
+	a.onecMu.Unlock()
+	return f.Outline(), nil
+}
+
+// OneCSectionText — текст модуля или раздела открытого файла.
+func (a *App) OneCSectionText(path, id string) (string, error) {
+	a.onecMu.Lock()
+	defer a.onecMu.Unlock()
+	if a.onecFile == nil || a.onecPath != path {
+		f, err := onec.Open(path)
+		if err != nil {
+			return "", err
+		}
+		a.onecPath, a.onecFile = path, f
+	}
+	text, ok := a.onecFile.SectionText(id)
+	if !ok {
+		return "", errors.New("раздел не найден")
+	}
+	return text, nil
 }
 
 // SaveOneC («Сохранить как…») записывает правки в новый файл того же формата

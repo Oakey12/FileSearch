@@ -14,6 +14,8 @@ export function InstallUpdate():Promise<void>;
 
 export function LoadNotes(arg1:string):Promise<string>;
 
+export function OneCSectionText(arg1:string,arg2:string):Promise<string>;
+
 export function OpenFile(arg1:string):Promise<void>;
 
 export function OpenOneC(arg1:string):Promise<onec.Document>;

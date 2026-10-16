@@ -4,6 +4,6 @@ package onec
 
 import "errors"
 
-func writeERT(src, dst, streamName string, data []byte) error {
-	return errors.New("запись .ert доступна только в Windows")
+func writeOLE(src, dst string, streams map[string][]byte) error {
+	return errors.New("запись файлов 1С 7.7 доступна только в Windows")
 }

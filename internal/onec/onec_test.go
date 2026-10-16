@@ -287,6 +287,67 @@ func TestSaveERT(t *testing.T) {
 	}
 }
 
+// testdata/sample77.md — конфигурация 7.7: модули во вложенных хранилищах,
+// имена объектов — в главном потоке метаданных.
+func TestOpenMD(t *testing.T) {
+	f, err := Open(filepath.Join("testdata", "sample77.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := f.Doc
+	if doc.Kind != "Конфигурация" || doc.Format != "1С:Предприятие 7.7" || !doc.CanSave {
+		t.Fatalf("шапка: %+v", doc)
+	}
+	want := map[string][2]string{ // id раздела → группа, название
+		"ole:GlobalData/MD Programm text":                          {"Конфигурация", "Глобальный модуль"},
+		"ole:TypedText/ModuleText_Number25/MD Programm text":       {"Документы", "РасходнаяНакладная: Модуль"},
+		"ole:TypedText/Transact_Number25/MD Programm text":         {"Документы", "РасходнаяНакладная: Модуль проведения"},
+		"ole:Document/Document_Number25/WorkBook/MD Programm text": {"Документы", "РасходнаяНакладная: Модуль формы"},
+		"ole:Subconto/Subconto_Number31/WorkBook/MD Programm text": {"Справочники", "Номенклатура: Модуль формы"},
+	}
+	for id, w := range want {
+		s := section(t, doc, id)
+		if s.Group != w[0] || s.Title != w[1] || !s.Editable {
+			t.Errorf("%s: %q / %q (правка %v)", id, s.Group, s.Title, s.Editable)
+		}
+	}
+	if !strings.Contains(section(t, doc, "ole:TypedText/Transact_Number25/MD Programm text").Text, "Проведено") {
+		t.Error("текст модуля проведения не прочитан")
+	}
+	if doc.Sections[0].Group != "Конфигурация" {
+		t.Errorf("первая группа %q, ожидалась «Конфигурация»", doc.Sections[0].Group)
+	}
+}
+
+func TestSaveMD(t *testing.T) {
+	src := copyFile(t, filepath.Join("testdata", "sample77.md"), "конфигурация.md")
+	f, err := Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	posting := "Процедура ОбработкаПроведения()\n\t// изменено\nКонецПроцедуры\n"
+	global := "Перем глНовая Экспорт;\n"
+	edits := map[string]string{
+		"ole:TypedText/Transact_Number25/MD Programm text": posting,
+		"ole:GlobalData/MD Programm text":                  global,
+	}
+	if err := f.SaveTo(src, edits); err != nil {
+		t.Fatal(err)
+	}
+	g, err := Open(src)
+	if err != nil {
+		t.Fatalf("сохранённый .md не открывается: %v", err)
+	}
+	for id, text := range edits {
+		if got := section(t, g.Doc, id).Text; got != text {
+			t.Errorf("%s после сохранения: %q", id, got)
+		}
+	}
+	if got := section(t, g.Doc, "ole:Subconto/Subconto_Number31/WorkBook/MD Programm text").Text; got != section(t, f.Doc, "ole:Subconto/Subconto_Number31/WorkBook/MD Programm text").Text {
+		t.Errorf("нетронутый модуль изменился: %q", got)
+	}
+}
+
 // «Сохранить» поверх исходного файла: файл заменяется атомарно.
 func TestSaveToOverwrite(t *testing.T) {
 	path := writeTemp(t, "a.epf", sampleEPF(t))
@@ -325,16 +386,38 @@ func TestRealSample(t *testing.T) {
 		t.Logf("  [%s] %s — %d символов, правка: %v %s", s.Group, s.Title, len([]rune(s.Text)), s.Editable, s.Note)
 	}
 	if f.Doc.CanSave {
-		saved, err := f.Save(nil)
-		if err != nil {
+		resaved := filepath.Join(t.TempDir(), "copy"+filepath.Ext(path))
+		if err := f.SaveTo(resaved, nil); err != nil {
 			t.Fatal(err)
 		}
-		g, err := Open(writeTemp(t, "copy"+filepath.Ext(path), saved))
+		g, err := Open(resaved)
 		if err != nil {
 			t.Fatalf("пересохранённый файл не открывается: %v", err)
 		}
 		if len(g.Doc.Sections) != len(f.Doc.Sections) {
 			t.Fatalf("после пересохранения разделов %d, было %d", len(g.Doc.Sections), len(f.Doc.Sections))
 		}
+
+		// Правка каждого редактируемого раздела переживает сохранение.
+		edits := map[string]string{}
+		for _, s := range f.Doc.Sections {
+			if s.Editable {
+				edits[s.ID] = s.Text + "\n// правка " + s.ID
+			}
+		}
+		dst := filepath.Join(t.TempDir(), "edited"+filepath.Ext(path))
+		if err := f.SaveTo(dst, edits); err != nil {
+			t.Fatal(err)
+		}
+		h, err := Open(dst)
+		if err != nil {
+			t.Fatalf("изменённый файл не открывается: %v", err)
+		}
+		for _, s := range h.Doc.Sections {
+			if want, ok := edits[s.ID]; ok && strings.ReplaceAll(s.Text, "\r\n", "\n") != strings.ReplaceAll(want, "\r\n", "\n") {
+				t.Errorf("раздел %q после сохранения не совпадает", s.Title)
+			}
+		}
+		t.Logf("правок сохранено: %d", len(edits))
 	}
 }

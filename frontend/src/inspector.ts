@@ -73,7 +73,7 @@ export class Inspector {
       this.header(item),
       this.view(result),
       this.meta(item, result),
-      this.buttons(item),
+      this.buttons(item, result),
     )
   }
 
@@ -217,7 +217,7 @@ export class Inspector {
     return list
   }
 
-  private buttons(item: FileItem): HTMLElement {
+  private buttons(item: FileItem, result?: PreviewResult): HTMLElement {
     const row = el('div', 'qs-actions')
     const open = el('button', 'btn btn-primary', 'Открыть')
     const reveal = el('button', 'btn', 'Показать в Проводнике')
@@ -228,8 +228,9 @@ export class Inspector {
     open.addEventListener('click', () => this.actions.open(item.path))
     reveal.addEventListener('click', () => this.actions.reveal(item.path))
     board.addEventListener('click', () => this.actions.toBoard(item))
-    if (isOneCFile(item.path)) {
-      // Для обработок 1С главное действие — посмотреть код в декодере.
+    // .md — конфигурация 1С 7.7, только если предпросмотр её узнал (иначе это Markdown).
+    if (isOneCFile(item.path) || result?.encoding === '1С') {
+      // Для файлов 1С главное действие — посмотреть код в декодере.
       const decode = el('button', 'btn btn-primary', 'Открыть в декодере 1С')
       decode.type = 'button'
       decode.addEventListener('click', () => this.actions.openOneC(item.path))
