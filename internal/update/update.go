@@ -31,6 +31,7 @@ var (
 
 var (
 	ErrNoReleases       = errors.New("на сервере нет опубликованной версии")
+	ErrUnavailable      = errors.New("сервер обновлений недоступен")
 	ErrChecksumMismatch = errors.New("контрольная сумма скачанного файла не совпадает")
 )
 
@@ -60,7 +61,7 @@ func CheckLatest(ctx context.Context) (Release, bool, error) {
 
 	resp, err := manifestClient.Do(req)
 	if err != nil {
-		return Release{}, false, fmt.Errorf("сервер обновлений недоступен: %w", err)
+		return Release{}, false, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	defer resp.Body.Close()
 

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Поиск файлов</title>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-doc" viewBox="0 0 16 16"><path d="M4 1.5h5.2L13 5.3V13a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 13V3a1.5 1.5 0 0 1 1-1.5Z" fill="currentColor"/><path d="M9.2 1.5V4a1.3 1.3 0 0 0 1.3 1.3H13" fill="rgba(255,255,255,.45)"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.75 4.25A1.5 1.5 0 0 1 3.25 2.75h3l1.5 1.5h5a1.5 1.5 0 0 1 1.5 1.5v6.5a1.5 1.5 0 0 1-1.5 1.5h-9.5a1.5 1.5 0 0 1-1.5-1.5Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m10.4 10.4 3.6 3.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-close" viewBox="0 0 16 16"><path d="m4.5 4.5 7 7m0-7-7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 16 16"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10 3v10" stroke="currentColor" stroke-width="1.3"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <div class="app" id="app">
+    <aside class="sidebar">
+      <nav class="places" aria-label="Папки">
+        <h2 class="side-title">Папки</h2>
+        <button class="side-item side-pick" id="pick" type="button">
+          <svg class="side-icon"><use href="#i-plus"/></svg><span>Выбрать папку…</span>
+        </button>
+        <ul class="recent" id="recent"></ul>
+      </nav>
+
+      <footer class="updates">
+        <p class="version" id="version"></p>
+        <div class="update-row">
+          <button class="update-btn" id="update" type="button">Обновить</button>
+          <span class="update-dot" id="updateDot" hidden title="Есть новая версия"></span>
+        </div>
+        <p class="update-note" id="updateNote" role="status"></p>
+      </footer>
+    </aside>
+
+    <main class="main">
+      <header class="toolbar">
+        <div class="searchfield">
+          <svg class="searchfield-icon"><use href="#i-search"/></svg>
+          <input id="query" type="search" placeholder="Имя файла или его часть" autocomplete="off" spellcheck="false" aria-label="Имя файла">
+          <button class="scope" id="scope" type="button" title="Папка для поиска">
+            <svg><use href="#i-folder"/></svg><span id="scopeName">Выберите папку</span>
+          </button>
+        </div>
+        <button class="tool-btn" id="toggleInspector" type="button" title="Предпросмотр (пробел)" aria-pressed="false">
+          <svg><use href="#i-panel"/></svg>
+        </button>
+      </header>
+
+      <div class="results">
+        <div class="list-head" id="listHead" role="row">
+          <button type="button" data-key="name" class="col col-name">Имя</button>
+          <button type="button" data-key="mod" class="col col-mod">Изменён</button>
+          <button type="button" data-key="size" class="col col-size">Размер</button>
+          <button type="button" data-key="kind" class="col col-kind">Тип</button>
+          <button type="button" data-key="dir" class="col col-dir">Папка</button>
+        </div>
+        <div class="list" id="list" tabindex="0" role="listbox" aria-label="Найденные файлы">
+          <div class="list-spacer" id="spacer"></div>
+        </div>
+        <div class="empty" id="empty"></div>
+      </div>
+
+      <footer class="statusbar">
+        <span class="spinner" id="spinner" hidden></span>
+        <span id="status" role="status"></span>
+        <span class="status-warn" id="statusWarn"></span>
+        <button class="link-btn" id="stop" type="button" hidden>Остановить</button>
+      </footer>
+    </main>
+
+    <section class="inspector" id="inspector" aria-label="Предпросмотр" hidden>
+      <div class="inspector-body" id="inspectorBody"></div>
+    </section>
+  </div>
+
+  <dialog class="sheet" id="updateSheet">
+    <form method="dialog" class="sheet-body">
+      <h2 class="sheet-title" id="sheetTitle"></h2>
+      <p class="sheet-text" id="sheetText"></p>
+      <p class="sheet-notes" id="sheetNotes"></p>
+      <div class="sheet-progress" id="sheetProgress" hidden><div class="sheet-bar" id="sheetBar"></div></div>
+      <p class="sheet-error" id="sheetError" role="alert"></p>
+      <div class="sheet-actions">
+        <button class="btn" value="cancel" id="sheetCancel">Позже</button>
+        <button class="btn btn-primary" type="button" id="sheetConfirm">Обновить и перезапустить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="alert" hidden></div>
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

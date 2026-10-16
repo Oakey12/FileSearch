@@ -1,190 +1,219 @@
+// Package preview готовит содержимое файла для панели предпросмотра.
+// Пакет ничего не рисует: он возвращает данные, а показывает их интерфейс.
 package preview
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/xml"
 	"errors"
-	"file-search/internal/uiTheme"
-	"file-search/internal/varAndConst"
 	"fmt"
-	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/widget"
 	"github.com/xuri/excelize/v2"
-
-	_ "golang.org/x/image/bmp"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/encoding/unicode"
 )
 
 const (
+	// MaxTextSize — сколько байт текста читать для предпросмотра.
+	MaxTextSize = 1024 * 1024
+
 	maxExcelRows = 500
 	maxExcelCols = 50
-
-	// PreviewWindowX и PreviewWindowY задают начальное положение окна
-	// предпросмотра в пикселях от левого верхнего угла основного монитора.
-	// Измените эти два значения, чтобы настроить положение окна.
-	PreviewWindowX int32 = 350
-	PreviewWindowY int32 = 400
 )
 
-// showPreview создаёт отдельное окно ОС, которое можно перемещать независимо.
-func ShowPreview(_ fyne.Window, path string) {
-	title := "Предпросмотр: " + filepath.Base(path)
-	previewWindow := fyne.CurrentApp().NewWindow(title)
-	previewWindow.Resize(fyne.NewSize(850, 600))
-	previewWindow.SetContent(container.NewCenter(widget.NewLabel("Загрузка предпросмотра…")))
-	previewWindow.Show()
-	uiTheme.DarkTitleBar(previewWindow)
-	go moveWindowByTitle(title, PreviewWindowX, PreviewWindowY)
+// Kind — способ показа файла.
+const (
+	KindText  = "text"
+	KindImage = "image"
+	KindSheet = "sheet"
+	KindInfo  = "info"
+)
 
-	go func() {
-		preview, err := createPreview(path)
-		fyne.Do(func() {
-			if err != nil {
-				message := widget.NewLabel("Не удалось открыть файл:\n" + err.Error())
-				message.Wrapping = fyne.TextWrapWord
-				previewWindow.SetContent(container.NewCenter(message))
-				return
-			}
-			previewWindow.SetContent(preview)
-		})
-	}()
+// Result — всё, что нужно панели предпросмотра.
+type Result struct {
+	Kind      string  `json:"kind"`
+	Path      string  `json:"path"`
+	Name      string  `json:"name"`
+	Ext       string  `json:"ext"`
+	Size      int64   `json:"size"`
+	Modified  int64   `json:"mod"`
+	Text      string  `json:"text,omitempty"`
+	Encoding  string  `json:"encoding,omitempty"`
+	Truncated bool    `json:"truncated,omitempty"`
+	Sheets    []Sheet `json:"sheets,omitempty"`
+	Note      string  `json:"note,omitempty"`
+	Image     string  `json:"image,omitempty"` // адрес картинки, заполняет приложение
 }
 
-func createPreview(path string) (fyne.CanvasObject, error) {
+// Sheet — лист Excel, обрезанный до maxExcelRows × maxExcelCols.
+type Sheet struct {
+	Name      string     `json:"name"`
+	Rows      [][]string `json:"rows"`
+	Truncated bool       `json:"truncated,omitempty"`
+}
+
+var textExtensions = map[string]bool{
+	".txt": true, ".log": true, ".md": true, ".json": true, ".xml": true, ".csv": true, ".tsv": true,
+	".go": true, ".js": true, ".ts": true, ".html": true, ".htm": true, ".css": true, ".sql": true,
+	".yaml": true, ".yml": true, ".ini": true, ".conf": true, ".cfg": true, ".toml": true,
+	".bat": true, ".cmd": true, ".ps1": true, ".py": true, ".cs": true, ".java": true,
+	".c": true, ".h": true, ".cpp": true, ".php": true, ".sh": true,
+}
+
+var imageExtensions = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".bmp": true, ".webp": true, ".ico": true,
+}
+
+// IsImage сообщает, показывается ли файл как картинка.
+func IsImage(path string) bool {
+	return imageExtensions[strings.ToLower(filepath.Ext(path))]
+}
+
+// Load читает файл и возвращает данные для предпросмотра.
+func Load(path string) (Result, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, err
+		return Result{}, err
+	}
+	if info.IsDir() {
+		return Result{}, errors.New("это папка, а не файл")
 	}
 
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".png", ".jpg", ".jpeg", ".gif", ".bmp":
-		return createImagePreview(path)
-	case ".txt", ".log", ".md", ".json", ".xml", ".csv",
-		".go", ".js", ".ts", ".html", ".css", ".sql",
-		".yaml", ".yml", ".ini", ".conf":
-		return createTextPreview(path)
-	case ".docx":
-		return createDOCXPreview(path)
-	case ".xlsx", ".xlsm", ".xltx", ".xltm":
-		return createXLSXPreview(path)
-	case ".doc", ".xls":
-		return createFileInfoPreview(path, info,
-			"Старый бинарный формат Office не поддерживается встроенным просмотром."), nil
-	default:
-		return createFileInfoPreview(path, info,
-			"Встроенный просмотр этого формата не поддерживается."), nil
+	ext := strings.ToLower(filepath.Ext(path))
+	result := Result{
+		Kind:     KindInfo,
+		Path:     path,
+		Name:     info.Name(),
+		Ext:      strings.TrimPrefix(ext, "."),
+		Size:     info.Size(),
+		Modified: info.ModTime().UnixMilli(),
 	}
+
+	switch {
+	case imageExtensions[ext]:
+		result.Kind = KindImage
+	case textExtensions[ext]:
+		err = loadText(path, &result)
+	case ext == ".docx":
+		err = loadDOCX(path, &result)
+	case ext == ".xlsx" || ext == ".xlsm" || ext == ".xltx" || ext == ".xltm":
+		err = loadSheets(path, &result)
+	case ext == ".doc" || ext == ".xls":
+		result.Note = "Старый формат Office не показывается во встроенном просмотре. Откройте файл в Word или Excel."
+	default:
+		result.Note = "Этот формат не показывается во встроенном просмотре."
+	}
+	return result, err
 }
 
-func createImagePreview(path string) (fyne.CanvasObject, error) {
+func loadText(path string, result *Result) error {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer file.Close()
 
-	decodedImage, _, err := image.Decode(file)
+	data, err := io.ReadAll(io.LimitReader(file, MaxTextSize+1))
 	if err != nil {
-		return nil, err
+		return err
 	}
-	preview := canvas.NewImageFromImage(decodedImage)
-	preview.FillMode = canvas.ImageFillContain
-	preview.ScaleMode = canvas.ImageScaleSmooth
-	return container.NewStack(preview), nil
+	if len(data) > MaxTextSize {
+		data = data[:MaxTextSize]
+		result.Truncated = true
+	}
+
+	text, encoding, ok := decodeText(data)
+	if !ok {
+		result.Note = "Файл похож на двоичный, текст не показывается."
+		return nil
+	}
+	result.Kind = KindText
+	result.Text = text
+	result.Encoding = encoding
+	return nil
 }
 
-func createTextPreview(path string) (fyne.CanvasObject, error) {
-	text, truncated, err := readLimitedText(path)
+// decodeText определяет кодировку: UTF-8 (с BOM и без), UTF-16 с BOM,
+// иначе Windows-1251 — типичная кодировка старых русских текстовых файлов.
+// ok = false, если данные похожи на двоичный файл.
+func decodeText(data []byte) (text, encoding string, ok bool) {
+	switch {
+	case bytes.HasPrefix(data, []byte{0xEF, 0xBB, 0xBF}):
+		return string(trimPartialRune(data[3:])), "UTF-8", true
+	case bytes.HasPrefix(data, []byte{0xFF, 0xFE}), bytes.HasPrefix(data, []byte{0xFE, 0xFF}):
+		decoded, err := unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder().Bytes(data[:len(data)&^1])
+		if err != nil {
+			return "", "", false
+		}
+		return string(decoded), "UTF-16", true
+	}
+
+	head := data[:min(len(data), 8192)]
+	if bytes.IndexByte(head, 0) >= 0 {
+		return "", "", false
+	}
+	if trimmed := trimPartialRune(data); utf8.Valid(trimmed) {
+		return string(trimmed), "UTF-8", true
+	}
+	decoded, err := charmap.Windows1251.NewDecoder().Bytes(data)
 	if err != nil {
-		return nil, err
+		return "", "", false
 	}
-	if truncated {
-		text += "\n\n--- Предпросмотр ограничен первым 1 МБ ---"
-	}
-	return newReadOnlyText(text), nil
+	return string(decoded), "Windows-1251", true
 }
 
-func createDOCXPreview(path string) (fyne.CanvasObject, error) {
-	text, truncated, err := extractDOCXText(path, varAndConst.MaxPreviewSize)
+// trimPartialRune отрезает недописанный символ UTF-8 в конце, который
+// появляется, когда чтение обрезано по MaxTextSize.
+func trimPartialRune(data []byte) []byte {
+	for cut := 0; cut < utf8.UTFMax && cut < len(data); cut++ {
+		r, size := utf8.DecodeLastRune(data[:len(data)-cut])
+		if r != utf8.RuneError || size > 1 {
+			return data[:len(data)-cut]
+		}
+	}
+	return data
+}
+
+func loadDOCX(path string, result *Result) error {
+	text, truncated, err := extractDOCXText(path, MaxTextSize)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if strings.TrimSpace(text) == "" {
-		text = "Документ не содержит доступного для предпросмотра текста."
+		result.Note = "В документе нет текста для предпросмотра."
+		return nil
 	}
-	if truncated {
-		text += "\n\n--- Предпросмотр ограничен первым 1 МБ текста ---"
-	}
-	return newReadOnlyText(text), nil
+	result.Kind = KindText
+	result.Text = text
+	result.Truncated = truncated
+	return nil
 }
 
-func createXLSXPreview(path string) (fyne.CanvasObject, error) {
+func loadSheets(path string, result *Result) error {
 	book, err := excelize.OpenFile(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer book.Close()
 
-	sheetNames := book.GetSheetList()
-	if len(sheetNames) == 0 {
-		return nil, errors.New("в книге не найдено листов")
-	}
-
-	sheets := make(map[string][][]string, len(sheetNames))
-	truncated := make(map[string]bool, len(sheetNames))
-	for _, name := range sheetNames {
-		rows, wasTruncated, readErr := readExcelSheet(book, name)
-		if readErr != nil {
-			return nil, fmt.Errorf("лист %q: %w", name, readErr)
+	for _, name := range book.GetSheetList() {
+		rows, truncated, err := readExcelSheet(book, name)
+		if err != nil {
+			return fmt.Errorf("лист %q: %w", name, err)
 		}
-		sheets[name] = rows
-		truncated[name] = wasTruncated
+		result.Sheets = append(result.Sheets, Sheet{Name: name, Rows: rows, Truncated: truncated})
 	}
-
-	selectedSheet := sheetNames[0]
-	info := widget.NewLabel("")
-	info.Wrapping = fyne.TextWrapWord
-	var table *widget.Table
-	refreshInfo := func() {
-		message := fmt.Sprintf("Лист: %s · строк: %d", selectedSheet, len(sheets[selectedSheet]))
-		if truncated[selectedSheet] {
-			message += fmt.Sprintf(" · показаны первые %d строк и %d столбцов", maxExcelRows, maxExcelCols)
-		}
-		info.SetText(message)
+	if len(result.Sheets) == 0 {
+		return errors.New("в книге не найдено листов")
 	}
-
-	table = widget.NewTable(
-		func() (int, int) { return excelTableSize(sheets[selectedSheet]) },
-		func() fyne.CanvasObject {
-			label := widget.NewLabel("")
-			label.Truncation = fyne.TextTruncateEllipsis
-			return label
-		},
-		func(id widget.TableCellID, object fyne.CanvasObject) {
-			object.(*widget.Label).SetText(excelCell(sheets[selectedSheet], id.Row, id.Col))
-		},
-	)
-	table.SetColumnWidth(0, 140)
-
-	sheetSelect := widget.NewSelect(sheetNames, func(name string) {
-		selectedSheet = name
-		table.Refresh()
-		refreshInfo()
-	})
-	sheetSelect.SetSelected(selectedSheet)
-	refreshInfo()
-	header := container.NewBorder(nil, nil, widget.NewLabel("Лист:"), nil, sheetSelect)
-	return container.NewBorder(container.NewVBox(header, info, widget.NewSeparator()), nil, nil, nil, table), nil
+	result.Kind = KindSheet
+	return nil
 }
 
 func readExcelSheet(book *excelize.File, sheet string) ([][]string, bool, error) {
@@ -194,7 +223,7 @@ func readExcelSheet(book *excelize.File, sheet string) ([][]string, bool, error)
 	}
 	defer iterator.Close()
 
-	rows := make([][]string, 0, maxExcelRows)
+	rows := make([][]string, 0, 64)
 	truncated := false
 	for iterator.Next() {
 		if len(rows) >= maxExcelRows {
@@ -215,23 +244,6 @@ func readExcelSheet(book *excelize.File, sheet string) ([][]string, bool, error)
 		return nil, false, err
 	}
 	return rows, truncated, nil
-}
-
-func excelTableSize(rows [][]string) (int, int) {
-	columns := 1
-	for _, row := range rows {
-		if len(row) > columns {
-			columns = len(row)
-		}
-	}
-	return len(rows), columns
-}
-
-func excelCell(rows [][]string, row, column int) string {
-	if row < 0 || row >= len(rows) || column < 0 || column >= len(rows[row]) {
-		return ""
-	}
-	return rows[row][column]
 }
 
 func extractDOCXText(path string, limit int64) (string, bool, error) {
@@ -312,64 +324,4 @@ func decodeDOCXDocument(reader io.Reader, limit int64) (string, bool, error) {
 		}
 	}
 	return strings.TrimSpace(builder.String()), truncated, nil
-}
-
-func readLimitedText(path string) (string, bool, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", false, err
-	}
-	defer file.Close()
-
-	data, err := io.ReadAll(io.LimitReader(file, varAndConst.MaxPreviewSize+1))
-	if err != nil {
-		return "", false, err
-	}
-	truncated := len(data) > varAndConst.MaxPreviewSize
-	if truncated {
-		data = data[:varAndConst.MaxPreviewSize]
-	}
-	return string(data), truncated, nil
-}
-
-// newReadOnlyText показывает текст файла чёрным на белом фоне. Текст можно
-// выделить и скопировать, но не изменить.
-func newReadOnlyText(text string) fyne.CanvasObject {
-	label := widget.NewLabel(text)
-	label.Wrapping = fyne.TextWrapOff
-	label.Selectable = true
-	return uiTheme.Paper(container.NewScroll(label))
-}
-
-func createFileInfoPreview(path string, info os.FileInfo, reason string) fyne.CanvasObject {
-	extension := filepath.Ext(path)
-	if extension == "" {
-		extension = "без расширения"
-	}
-	message := fmt.Sprintf(
-		"%s\n\nИмя: %s\nТип: %s\nРазмер: %s\nИзменён: %s\n\nПуть:\n%s",
-		reason, info.Name(), extension, FormatFileSize(info.Size()),
-		info.ModTime().Format("02.01.2006 15:04:05"), path,
-	)
-	label := widget.NewLabel(message)
-	label.Wrapping = fyne.TextWrapWord
-	return container.NewVScroll(label)
-}
-
-func FormatFileSize(size int64) string {
-	const (
-		kilobyte = 1024
-		megabyte = kilobyte * 1024
-		gigabyte = megabyte * 1024
-	)
-	switch {
-	case size >= gigabyte:
-		return fmt.Sprintf("%.2f ГБ", float64(size)/gigabyte)
-	case size >= megabyte:
-		return fmt.Sprintf("%.2f МБ", float64(size)/megabyte)
-	case size >= kilobyte:
-		return fmt.Sprintf("%.2f КБ", float64(size)/kilobyte)
-	default:
-		return fmt.Sprintf("%d байт", size)
-	}
 }
