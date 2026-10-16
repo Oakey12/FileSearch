@@ -106,3 +106,23 @@ export function mountParticles(host: HTMLElement, particles: Particle[] = makePa
     host.classList.remove('bd-paused')
   }
 }
+
+/**
+ * Следит за плавностью первые две секунды после включения фона: если кадры
+ * медленнее 45 в секунду (слабая видеокарта, удалённый рабочий стол), вызывает
+ * onSlow — стекло без размытия. Возвращает отмену.
+ */
+export function watchSmoothness(onSlow: () => void, sampleMs = 2000, minFps = 45): () => void {
+  let frames = 0
+  let start = 0
+  let raf = requestAnimationFrame(function step(t) {
+    if (!start) start = t
+    frames++
+    if (t - start < sampleMs) {
+      raf = requestAnimationFrame(step)
+    } else if (!document.hidden && (frames * 1000) / (t - start) < minFps) {
+      onSlow()
+    }
+  })
+  return () => cancelAnimationFrame(raf)
+}
