@@ -8,6 +8,7 @@ import { parseTerms } from './highlight'
 import { Inspector, type PreviewResult } from './inspector'
 import { VirtualList, type FileItem } from './list'
 import { WINDOW_BG, currentTheme, saveTheme, switchTheme, type Theme } from './theme'
+import { applyBackdrop, currentBackdrop, mountParticles, saveBackdrop, type Backdrop } from './backdrop'
 import { toast } from './toast'
 
 // --- События из Go ------------------------------------------------------
@@ -550,7 +551,8 @@ const themeButton = byId<HTMLButtonElement>('themeToggle')
 // Рамка и заголовок окна — средствами Wails; в браузере при разработке их может не быть.
 function syncWindowTheme(theme: Theme): void {
   try {
-    const [r, g, b] = WINDOW_BG[theme]
+    // Под фоном «Частицы» край окна — цвета неба.
+    const [r, g, b] = currentBackdrop() === 'particles' ? (theme === 'light' ? [223, 232, 246] : [2, 16, 39]) : WINDOW_BG[theme]
     WindowSetBackgroundColour(r, g, b, 255)
     if (theme === 'light') WindowSetLightTheme()
     else WindowSetDarkTheme()
@@ -574,9 +576,62 @@ themeButton.addEventListener('click', () => {
   Go.SaveWindowTheme(next).catch(() => {})
 })
 
-// Атрибут уже поставил скрипт в index.html; здесь — кнопка и рамка окна.
+// --- Фон окна ------------------------------------------------------------
+
+const backdropButton = byId<HTMLButtonElement>('backdropButton')
+const backdropMenu = byId<HTMLElement>('backdropMenu')
+const backdropOptions = [...backdropMenu.querySelectorAll<HTMLButtonElement>('.bd-option')]
+const particlesHost = byId<HTMLElement>('bdParticles')
+let unmountParticles: (() => void) | null = null
+
+function setBackdrop(value: Backdrop): void {
+  applyBackdrop(value)
+  unmountParticles?.()
+  unmountParticles = value === 'particles' ? mountParticles(particlesHost) : null
+  for (const o of backdropOptions) {
+    const on = o.dataset.backdrop === value
+    o.setAttribute('aria-checked', String(on))
+    o.tabIndex = on ? 0 : -1
+  }
+  backdropButton.setAttribute('aria-pressed', String(value !== 'none'))
+  syncWindowTheme(currentTheme())
+}
+
+function openBackdropMenu(open: boolean): void {
+  backdropMenu.hidden = !open
+  backdropButton.setAttribute('aria-expanded', String(open))
+  if (open) backdropOptions.find((o) => o.getAttribute('aria-checked') === 'true')?.focus()
+}
+
+backdropButton.addEventListener('click', () => openBackdropMenu(backdropMenu.hidden))
+for (const o of backdropOptions) {
+  o.addEventListener('click', () => {
+    const value = o.dataset.backdrop as Backdrop
+    setBackdrop(value)
+    saveBackdrop(value)
+  })
+}
+backdropMenu.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    e.stopPropagation()
+    openBackdropMenu(false)
+    backdropButton.focus()
+  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    // Радиогруппа: стрелки выбирают соседний вариант.
+    const i = backdropOptions.indexOf(document.activeElement as HTMLButtonElement)
+    const next = backdropOptions[(i + (e.key === 'ArrowRight' ? 1 : -1) + backdropOptions.length) % backdropOptions.length]
+    next.focus()
+    next.click()
+  }
+})
+document.addEventListener('pointerdown', (e) => {
+  const target = e.target as Node
+  if (!backdropMenu.hidden && !backdropMenu.contains(target) && !backdropButton.contains(target)) openBackdropMenu(false)
+})
+
+// Атрибуты уже поставили скрипты в index.html; здесь — кнопки, круги и рамка окна.
 renderThemeButton(currentTheme())
-if (currentTheme() === 'light') syncWindowTheme('light')
+setBackdrop(currentBackdrop())
 
 // --- Домой: к поиску файлов из любого режима ------------------------------
 
