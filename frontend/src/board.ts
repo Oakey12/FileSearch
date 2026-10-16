@@ -545,7 +545,7 @@ export class Board {
       swatch.type = 'button'
       swatch.className = color ? 'swatch' : 'swatch swatch-auto'
       swatch.title = name
-      swatch.style.setProperty('--swatch', color || '#f2f2f4')
+      swatch.style.setProperty('--swatch', color || 'var(--text)') // «Обычный» — цвет текста темы
       swatch.setAttribute('aria-pressed', String(cards.every((c) => (c.textColor ?? '') === color)))
       swatch.addEventListener('click', () => this.edit(() => ids.forEach((id) => this.model.update(id, { textColor: color || undefined }))))
       colorRow.appendChild(swatch)

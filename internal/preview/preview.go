@@ -30,7 +30,11 @@ const (
 	KindSheet = "sheet"
 	KindPDF   = "pdf"
 	KindInfo  = "info"
+	KindOneC  = "onec" // файл 1С: сводка и начало главного модуля
 )
+
+// oneCPreviewLines — сколько строк главного модуля показывать в предпросмотре.
+const oneCPreviewLines = 400
 
 // Result — всё, что нужно панели предпросмотра.
 type Result struct {
@@ -46,6 +50,8 @@ type Result struct {
 	Sheets    []Sheet `json:"sheets,omitempty"`
 	Note      string  `json:"note,omitempty"`
 	URL       string  `json:"url,omitempty"` // адрес картинки или PDF, заполняет приложение
+
+	OneC *onec.Summary `json:"onec,omitempty"`
 }
 
 // Sheet — лист Excel, обрезанный до maxExcelRows × maxExcelCols.
@@ -66,8 +72,19 @@ func Servable(path string) bool {
 	return imageExtensions[ext] || ext == ".pdf"
 }
 
-// Load читает файл и возвращает данные для предпросмотра.
-func Load(path string) (Result, error) {
+// IsOneC сообщает, что файл — обработка, отчёт, конфигурация или расширение 1С.
+// .md считается файлом 1С, только если это составной документ 1С 7.7, а не Markdown.
+func IsOneC(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".epf", ".erf", ".ert", ".cf", ".cfe":
+		return true
+	case ".md":
+		return isOneC77(path)
+	}
+	return false
+}
+
+func newResult(path string) (Result, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return Result{}, err
@@ -75,25 +92,56 @@ func Load(path string) (Result, error) {
 	if info.IsDir() {
 		return Result{}, errors.New("это папка, а не файл")
 	}
-
 	ext := strings.ToLower(filepath.Ext(path))
-	result := Result{
+	return Result{
 		Kind:     KindInfo,
 		Path:     path,
 		Name:     info.Name(),
 		Ext:      strings.TrimPrefix(ext, "."),
 		Size:     info.Size(),
 		Modified: info.ModTime().UnixMilli(),
+	}, nil
+}
+
+// OneC — предпросмотр уже открытого файла 1С (приложение держит его в общем
+// с декодером кеше). openErr — ошибка открытия: она показывается заметкой.
+func OneC(path string, f *onec.File, openErr error) (Result, error) {
+	result, err := newResult(path)
+	if err != nil {
+		return result, err
 	}
+	if openErr != nil {
+		result.Note = "Не удалось прочитать файл 1С: " + openErr.Error()
+		return result, nil
+	}
+	summary := f.Summary(oneCPreviewLines)
+	if summary.Sections == 0 {
+		result.Note = "В файле 1С нет модулей с кодом."
+		return result, nil
+	}
+	result.Kind = KindOneC
+	result.OneC = &summary
+	result.Encoding = "1С"
+	return result, nil
+}
+
+// Load читает файл и возвращает данные для предпросмотра.
+func Load(path string) (Result, error) {
+	if IsOneC(path) {
+		f, err := onec.Open(path)
+		return OneC(path, f, err)
+	}
+	result, err := newResult(path)
+	if err != nil {
+		return result, err
+	}
+	ext := "." + result.Ext
 
 	switch {
 	case imageExtensions[ext]:
 		result.Kind = KindImage
 	case ext == ".pdf":
 		result.Kind = KindPDF
-	// Файлы 1С — раньше текстовых: .md бывает и Markdown, и конфигурацией 1С 7.7.
-	case ext == ".epf" || ext == ".erf" || ext == ".ert" || ext == ".cf" || ext == ".cfe" || (ext == ".md" && isOneC77(path)):
-		err = loadOneC(path, &result)
 	case content.IsText(path):
 		err = loadText(path, &result)
 	case ext == ".docx":
@@ -165,27 +213,6 @@ func isOneC77(path string) bool {
 	head := make([]byte, 8)
 	n, _ := f.Read(head)
 	return onec.IsOLE(head[:n])
-}
-
-// loadOneC показывает модули внешней обработки или отчёта 1С текстом.
-func loadOneC(path string, result *Result) error {
-	text, err := onec.ExtractText(path)
-	if err != nil {
-		result.Note = "Не удалось прочитать файл 1С: " + err.Error()
-		return nil
-	}
-	if text == "" {
-		result.Note = "В файле 1С нет модулей с кодом."
-		return nil
-	}
-	if len(text) > MaxTextSize {
-		text = strings.ToValidUTF8(text[:MaxTextSize], "")
-		result.Truncated = true
-	}
-	result.Kind = KindText
-	result.Text = text
-	result.Encoding = "1С"
-	return nil
 }
 
 func loadSheets(path string, result *Result) error {

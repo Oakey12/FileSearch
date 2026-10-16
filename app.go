@@ -5,18 +5,15 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"file-search/internal/content"
-	"file-search/internal/onec"
 	"file-search/internal/preview"
 	"file-search/internal/search"
 	"file-search/internal/settings"
@@ -53,9 +50,7 @@ type App struct {
 	updateMu sync.Mutex
 	release  *update.Release
 
-	onecMu   sync.Mutex
-	onecPath string
-	onecFile *onec.File // последний открытый в декодере файл
+	onec onecCache // последний открытый файл 1С — общий для декодера и предпросмотра
 }
 
 const maxFiles = 32
@@ -183,6 +178,9 @@ func (a *App) OpenFile(path string) error {
 
 // Preview готовит предпросмотр файла.
 func (a *App) Preview(path string) (preview.Result, error) {
+	if preview.IsOneC(path) {
+		return a.previewOneC(path)
+	}
 	result, err := preview.Load(path)
 	if err != nil {
 		return result, err
@@ -237,135 +235,6 @@ func (a *App) fileMiddleware(next http.Handler) http.Handler {
 }
 
 // --- Декодер 1С ----------------------------------------------------------
-
-var onecFilters = []runtime.FileFilter{
-	{DisplayName: "Файлы 1С (*.epf, *.erf, *.cf, *.cfe, *.ert, *.md)", Pattern: "*.epf;*.erf;*.cf;*.cfe;*.ert;*.md"},
-	{DisplayName: "1С:Предприятие 8 (*.epf, *.erf, *.cf, *.cfe)", Pattern: "*.epf;*.erf;*.cf;*.cfe"},
-	{DisplayName: "1С:Предприятие 7.7 (*.ert, *.md)", Pattern: "*.ert;*.md"},
-}
-
-// PickOneCFile открывает стандартное окно выбора файла обработки или отчёта 1С.
-func (a *App) PickOneCFile() (string, error) {
-	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{Title: "Открыть обработку или отчёт 1С", Filters: onecFilters})
-}
-
-// OpenOneC разбирает файл 1С (.epf, .erf, .cf, .cfe — 1С 8; .ert, .md — 1С 7.7)
-// и возвращает список модулей и форм. Тексты — через OneCSectionText.
-func (a *App) OpenOneC(path string) (onec.Document, error) {
-	f, err := onec.Open(path)
-	if err != nil {
-		return onec.Document{}, err
-	}
-	a.onecMu.Lock()
-	a.onecPath, a.onecFile = path, f // держим только последний открытый файл
-	a.onecMu.Unlock()
-	return f.Outline(), nil
-}
-
-// OneCSectionText — текст модуля или раздела открытого файла.
-func (a *App) OneCSectionText(path, id string) (string, error) {
-	a.onecMu.Lock()
-	defer a.onecMu.Unlock()
-	if a.onecFile == nil || a.onecPath != path {
-		f, err := onec.Open(path)
-		if err != nil {
-			return "", err
-		}
-		a.onecPath, a.onecFile = path, f
-	}
-	text, ok := a.onecFile.SectionText(id)
-	if !ok {
-		return "", errors.New("раздел не найден")
-	}
-	return text, nil
-}
-
-// SaveOneC («Сохранить как…») записывает правки в новый файл того же формата
-// (.epf → .epf, .ert → .ert) и возвращает его путь. Пустая строка — окно закрыли.
-func (a *App) SaveOneC(path string, edits map[string]string) (string, error) {
-	ext := filepath.Ext(path)
-	target, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:            "Сохранить как",
-		DefaultDirectory: filepath.Dir(path),
-		DefaultFilename:  strings.TrimSuffix(filepath.Base(path), ext) + " (изменённый)" + ext,
-		Filters:          []runtime.FileFilter{{DisplayName: "Тот же формат (*" + ext + ")", Pattern: "*" + ext}},
-	})
-	if err != nil || target == "" {
-		return "", err
-	}
-	if !strings.EqualFold(filepath.Ext(target), ext) {
-		target += ext // формат файла не меняется
-	}
-	if strings.EqualFold(filepath.Clean(target), filepath.Clean(path)) {
-		return a.SaveOneCInPlace(path, edits)
-	}
-	return target, a.saveOneC(path, target, edits)
-}
-
-// SaveOneCInPlace («Сохранить») записывает правки в исходный файл. Перед этим
-// исходник копируется в %APPDATA%\FileSearch\Резервные копии. Возвращает путь копии.
-func (a *App) SaveOneCInPlace(path string, edits map[string]string) (string, error) {
-	backup, err := backupFile(path)
-	if err != nil {
-		return "", fmt.Errorf("не удалось сделать резервную копию, файл не изменён: %w", err)
-	}
-	if err := a.saveOneC(path, path, edits); err != nil {
-		return "", err
-	}
-	return backup, nil
-}
-
-func (a *App) saveOneC(src, dst string, edits map[string]string) error {
-	// Правки накладываются на свежий разбор файла с диска.
-	f, err := onec.Open(src)
-	if err != nil {
-		return err
-	}
-	if err := f.SaveTo(dst, edits); err != nil {
-		if errors.Is(err, os.ErrPermission) {
-			return errors.New("файл занят другой программой (например, открыт в 1С) или нет прав на запись")
-		}
-		return err
-	}
-	return nil
-}
-
-const maxBackups = 50
-
-// backupFile копирует файл в папку резервных копий и оставляет не больше maxBackups копий.
-func backupFile(path string) (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	dir = filepath.Join(dir, "FileSearch", "Резервные копии")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	ext := filepath.Ext(path)
-	name := strings.TrimSuffix(filepath.Base(path), ext) + " " + time.Now().Format("2006-01-02 15-04-05") + ext
-	target := filepath.Join(dir, name)
-	if err := os.WriteFile(target, data, 0o644); err != nil {
-		return "", err
-	}
-
-	entries, _ := os.ReadDir(dir)
-	if len(entries) > maxBackups {
-		sort.Slice(entries, func(i, j int) bool {
-			ii, _ := entries[i].Info()
-			jj, _ := entries[j].Info()
-			return ii.ModTime().Before(jj.ModTime())
-		})
-		for _, e := range entries[:len(entries)-maxBackups] {
-			_ = os.Remove(filepath.Join(dir, e.Name()))
-		}
-	}
-	return target, nil
-}
 
 // SaveOneCText сохраняет текст модуля в файл .bsl/.txt (UTF-8 с BOM — так его понимает 1С).
 func (a *App) SaveOneCText(suggestedName, text string) (string, error) {
@@ -478,4 +347,16 @@ func (a *App) watchUpdates() {
 		case <-time.After(updateCheckInterval):
 		}
 	}
+}
+
+// SaveWindowTheme запоминает тему для следующего запуска (см. savedTheme).
+func (a *App) SaveWindowTheme(theme string) error {
+	path := themeFile()
+	if path == "" || (theme != "light" && theme != "dark") {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(theme), 0o644)
 }

@@ -18,6 +18,10 @@ import (
 // и элементы «<GUID>.<N>» с его частями: модулями, формой, макетом, справкой.
 // Модуль — вложенный контейнер с элементом text (если модуль сохранён без
 // исходного текста, там только image).
+//
+// Для списка разделов читаются описания объектов и только начала частей — этого
+// хватает, чтобы понять, модуль это, форма или макет. Сам текст раздела читает
+// загрузчик, когда раздел открыли.
 
 // Классы объектов конфигурации: GUID класса → название группы в дереве.
 // Проверены на реальных конфигурациях; остальные — по описаниям формата.
@@ -70,7 +74,7 @@ var configGroupOrder = []string{
 var externalGroupOrder = []string{"Модули", "Формы", "Макеты", "Справка", "Описание"}
 
 var (
-	formDescRe     = regexp.MustCompile(`^\{1,\n(?:\{1,\n)?\{0,\n\{13,`)
+	formDescRe     = regexp.MustCompile(`^\{1,\n(?:\{1,\n)?\{0,\n\{1[3-9],`) // версия описания формы: 13, 14 (8.3.2x)…
 	templateDescRe = regexp.MustCompile(`^\{1,\n\{2,(\d+),`)
 	classGroupRe   = regexp.MustCompile(`\{([0-9a-f-]{36}),(\d+)((?:,\s*[0-9a-f-]{36})+)\}`)
 )
@@ -82,12 +86,16 @@ const (
 	tplDCS         = 6
 )
 
+// headSize — сколько байт с начала части нужно, чтобы понять, что в ней.
+const headSize = 8 << 10
+
 type v8Object struct {
 	guid, name, synonym string
 	class               string // группа в дереве («Справочники» …)
 	isForm, isTemplate  bool
 	tplType             int
-	owner               string // GUID владельца формы или макета
+	owner               string   // GUID владельца формы или макета
+	refs                []string // объекты, упомянутые в описании (кандидаты в формы и макеты)
 }
 
 type internalName struct{ name, owner string }
@@ -96,32 +104,54 @@ func normalizedDesc(e *v8Elem) string {
 	return strings.ReplaceAll(strings.TrimPrefix(string(e.payload), bom), "\r\n", "\n")
 }
 
-func openV8(path string, data []byte) (*File, error) {
-	root, err := parseContainer(data, 0)
-	if err != nil {
-		return nil, err
-	}
-	file := &File{v8: root, setters: map[string]func(string){}}
+func isGUIDName(name string) bool { return len(name) == 36 && isGUIDAt(name, 0) }
+
+func openV8(path string, file *File, root *container) error {
+	file.v8 = root
 	doc := &file.Doc
 	doc.Format = "1С:Предприятие 8"
 	doc.CanSave = true
 
-	// Объекты: имя, синоним, вид (форма, макет) по описанию.
-	objs := map[string]*v8Object{}
-	internal := map[string]internalName{} // внутренний id → имя и объект-владелец
+	// Префиксы частей «<id>.N»: внутренние id запоминаем только для них — у большой
+	// конфигурации имён реквизитов сотни тысяч, а частей у них нет.
+	guids := map[string]string{} // GUID элемента → та же строка (общая копия)
+	prefixes := map[string]bool{}
 	for _, e := range root.elems {
-		if len(e.Name) != 36 || !guidRe.MatchString(e.Name) {
-			continue
+		if isGUIDName(e.Name) {
+			guids[e.Name] = e.Name
+		} else if dot := strings.LastIndex(e.Name, "."); dot == 36 {
+			prefixes[e.Name[:36]] = true
 		}
+	}
+
+	// Объекты: имя, синоним, вид (форма, макет) по описанию. Описания разбираются
+	// параллельно, каждое читается и сразу отпускается — в памяти остаются только
+	// имена и ссылки. Итог собирается в порядке элементов, как при чтении подряд.
+	type descResult struct {
+		o     *v8Object
+		names []objectName // внутренние id, у которых есть части
+		isTop bool
+	}
+	descs := make([]descResult, len(root.elems))
+	err := forEach(file.ctx, len(root.elems), func(i int) error {
+		e := root.elems[i]
+		if guids[e.Name] == "" {
+			return nil
+		}
+		if err := e.load(); err != nil {
+			return err
+		}
+		defer e.unload()
 		desc := normalizedDesc(e)
-		o := &v8Object{guid: e.Name}
+		o := &v8Object{guid: guids[e.Name]}
+		r := descResult{o: o, isTop: strings.HasPrefix(desc, "{2,\n{"+e.Name+"}")}
 		names := objectNames(desc)
 		for _, n := range names {
 			if n.id == e.Name && o.name == "" {
 				o.name, o.synonym = n.name, n.synonym
 			}
-			if _, seen := internal[n.id]; !seen {
-				internal[n.id] = internalName{n.name, e.Name}
+			if prefixes[n.id] {
+				r.names = append(r.names, n)
 			}
 		}
 		if o.name == "" && len(names) > 0 {
@@ -134,25 +164,53 @@ func openV8(path string, data []byte) (*File, error) {
 			o.isTemplate = true
 			o.tplType, _ = strconv.Atoi(templateDescRe.FindStringSubmatch(desc)[1])
 		}
-		objs[e.Name] = o
+		if !o.isForm && !o.isTemplate {
+			seen := map[string]bool{}
+			eachGUID(desc, func(g string) {
+				if same, ok := guids[g]; ok && g != e.Name && !seen[g] {
+					seen[g] = true
+					o.refs = append(o.refs, same)
+				}
+			})
+		}
+		descs[i] = r
+		return nil
+	})
+	if err != nil {
+		return err
 	}
+	objs := make(map[string]*v8Object, len(guids))
+	internal := map[string]internalName{} // внутренний id → имя и объект-владелец
+	topGUID, isConfig := "", false
+	for _, r := range descs {
+		if r.o == nil {
+			continue
+		}
+		for _, n := range r.names {
+			if _, seen := internal[n.id]; !seen {
+				internal[n.id] = internalName{n.name, r.o.guid}
+			}
+		}
+		if topGUID == "" && r.isTop {
+			topGUID, isConfig = r.o.guid, true
+		}
+		objs[r.o.guid] = r.o
+	}
+	descs = nil
 
 	// Корень: конфигурация («{2,{свой GUID},…») или главный объект обработки (из root).
-	topGUID, isConfig := "", false
-	for _, e := range root.elems {
-		if len(e.Name) == 36 && strings.HasPrefix(normalizedDesc(e), "{2,\n{"+e.Name+"}") {
-			topGUID, isConfig = e.Name, true
-			break
-		}
-	}
 	if topGUID == "" {
 		if e := root.find("root"); e != nil {
-			topGUID = guidRe.FindString(string(e.payload))
+			if err := e.load(); err != nil {
+				return err
+			}
+			topGUID = firstGUID(string(e.payload))
+			e.unload()
 		}
 	}
 	top := objs[topGUID]
 	if top == nil {
-		return nil, errors.New("не найдено описание обработки или конфигурации")
+		return errors.New("не найдено описание обработки или конфигурации")
 	}
 	doc.Name, doc.Synonym = top.name, top.synonym
 	if doc.Name == "" {
@@ -174,17 +232,22 @@ func openV8(path string, data []byte) (*File, error) {
 
 	// Классы объектов — из групп в описании конфигурации.
 	if isConfig {
-		for _, m := range classGroupRe.FindAllStringSubmatch(normalizedDesc(root.find(topGUID)), -1) {
+		e := root.find(topGUID)
+		if err := e.load(); err != nil {
+			return err
+		}
+		for _, m := range classGroupRe.FindAllStringSubmatch(normalizedDesc(e), -1) {
 			label, ok := classLabels[m[1]]
 			if !ok {
 				label = "Прочие объекты"
 			}
-			for _, g := range guidRe.FindAllString(m[3], -1) {
+			eachGUID(m[3], func(g string) {
 				if o := objs[g]; o != nil && o.class == "" {
 					o.class = label
 				}
-			}
+			})
 		}
+		e.unload()
 	}
 
 	// Владельцы форм и макетов: объект, в описании которого они упомянуты.
@@ -193,26 +256,46 @@ func openV8(path string, data []byte) (*File, error) {
 		if o == nil || o.isForm || o.isTemplate || e.Name == topGUID {
 			continue
 		}
-		for _, g := range guidRe.FindAllString(string(e.payload), -1) {
-			if c := objs[g]; c != nil && c != o && (c.isForm || c.isTemplate) && c.owner == "" {
+		for _, g := range o.refs {
+			if c := objs[g]; c != nil && (c.isForm || c.isTemplate) && c.owner == "" {
 				c.owner = e.Name
 			}
 		}
 	}
+	for _, o := range objs {
+		o.refs = nil
+	}
 
+	// Части «<id>.N»: что в каждой — модуль, форма, макет — по началу данных.
+	// Тоже параллельно; сами разделы собираются по порядку.
+	infos := make([]partInfo, len(root.elems))
+	err = forEach(file.ctx, len(root.elems), func(i int) error {
+		e := root.elems[i]
+		if strings.LastIndex(e.Name, ".") != 36 {
+			return nil
+		}
+		info, err := inspectPart(e)
+		infos[i] = info
+		return err
+	})
+	if err != nil {
+		return err
+	}
 	b := &v8Builder{file: file, root: root, objs: objs, internal: internal, top: topGUID, isConfig: isConfig}
-	for _, e := range root.elems {
-		b.element(e)
+	for i, e := range root.elems {
+		b.element(e, infos[i])
 	}
 	if !isConfig {
-		b.help()
+		if err := b.help(); err != nil {
+			return err
+		}
 	}
 	b.sort()
 
 	if len(doc.Sections) == 0 {
-		return nil, errors.New("в файле не найдено ни модулей, ни форм")
+		return errors.New("в файле не найдено ни модулей, ни форм")
 	}
-	return file, nil
+	return nil
 }
 
 type v8Builder struct {
@@ -274,9 +357,33 @@ func (b *v8Builder) title(o *v8Object) string {
 	return o.name
 }
 
+// Модули самой конфигурации — в порядке важности, главный первым.
+var configModules = []string{"Модуль управляемого приложения", "Модуль сеанса", "Модуль обычного приложения", "Модуль внешнего соединения"}
+
+func configModuleRank(title string) int {
+	for i, t := range configModules {
+		if t == title {
+			return i
+		}
+	}
+	return len(configModules)
+}
+
 // moduleName — название модуля по номеру части и классу владельца.
 func moduleName(class string, n int, viaInternal bool) string {
 	switch {
+	case class == "Конфигурация":
+		// Части самой конфигурации (проверено по содержимому модулей).
+		switch n {
+		case 0:
+			return "Модуль обычного приложения"
+		case 5:
+			return "Модуль внешнего соединения"
+		case 6:
+			return "Модуль управляемого приложения"
+		case 7:
+			return "Модуль сеанса"
+		}
 	case viaInternal && n == 2:
 		return "Модуль команды"
 	case class == "Общие модули":
@@ -297,9 +404,47 @@ func moduleName(class string, n int, viaInternal bool) string {
 	return fmt.Sprintf("Модуль (%d)", n)
 }
 
-func (b *v8Builder) element(e *v8Elem) {
-	dot := strings.LastIndex(e.Name, ".")
-	if dot != 36 {
+func contains(names []string, name string) bool {
+	for _, n := range names {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// partInfo — что лежит в части «<id>.N» (по её началу).
+type partInfo struct {
+	part       bool     // это часть объекта
+	names      []string // элементы вложенного контейнера (nil — не контейнер)
+	moxcel     bool     // табличный документ
+	brace      bool     // скобочный текст (управляемая форма)
+	xml        bool     // XML после служебного заголовка (схема компоновки)
+	mostlyText bool
+	code       bool // текст похож на код 1С
+}
+
+func inspectPart(e *v8Elem) (partInfo, error) {
+	names, head, err := e.childNames()
+	if err != nil {
+		return partInfo{}, err
+	}
+	info := partInfo{part: true, names: names}
+	if names != nil {
+		return info, nil
+	}
+	payload := string(head)
+	info.moxcel = strings.HasPrefix(payload, "MOXCEL")
+	info.brace = strings.HasPrefix(strings.TrimPrefix(payload, bom), "{")
+	text := payload[textStart(payload):]
+	info.xml = strings.HasPrefix(text, "<?xml")
+	info.mostlyText = isMostlyText([]byte(text[:min(len(text), 4096)]))
+	info.code = looksLikeCode(text)
+	return info, nil
+}
+
+func (b *v8Builder) element(e *v8Elem, info partInfo) {
+	if !info.part {
 		return
 	}
 	prefix := e.Name[:36]
@@ -308,21 +453,22 @@ func (b *v8Builder) element(e *v8Elem) {
 		return
 	}
 	o, viaInternal := b.ownerOf(prefix)
-	doc := &b.file.Doc
+	names := info.names
 
 	// Модуль: вложенный контейнер с text (или только image — без исходного текста).
-	if e.child != nil && (e.child.find("text") != nil || e.child.find("image") != nil) && e.child.find("module") == nil {
-		owner := o
-		title := b.title(owner)
-		group := b.group(owner)
+	if (contains(names, "text") || contains(names, "image")) && !contains(names, "module") {
+		title, group := b.title(o), b.group(o)
 		kind := moduleName(group, n, viaInternal)
-		if viaInternal {
-			if in := b.internal[prefix]; in.name != "" && owner != nil && in.name != owner.name {
-				title = owner.name + " › " + in.name
+		if viaInternal && o != nil {
+			if in := b.internal[prefix]; in.name != "" && in.name != o.name {
+				title = o.name + " › " + in.name
 			}
 		}
-		if !b.isConfig && owner != nil && owner.guid == b.top {
+		switch {
+		case !b.isConfig && o != nil && o.guid == b.top:
 			title, kind = "", "Модуль объекта"
+		case b.isConfig && o != nil && o.guid == b.top:
+			title = "" // «Модуль сеанса», а не «УправлениеТорговлей: Модуль сеанса»
 		}
 		sec := Section{ID: "elem:" + e.Name, Group: group, Kind: "module"}
 		switch {
@@ -336,12 +482,12 @@ func (b *v8Builder) element(e *v8Elem) {
 		if !b.isConfig && sec.Title == "Модуль объекта" {
 			sec.ID = "object"
 		}
-		if text := e.child.find("text"); text != nil {
+		if contains(names, "text") {
 			sec.Editable = true
-			b.file.addTextElem(sec, text)
+			b.file.addPart(sec, innerText(e, "text"))
 		} else {
 			sec.Note = "Модуль сохранён без исходного текста — в файле только скомпилированный код, прочитать его нельзя."
-			doc.Sections = append(doc.Sections, sec)
+			b.file.addPart(sec, part{})
 		}
 		return
 	}
@@ -352,55 +498,62 @@ func (b *v8Builder) element(e *v8Elem) {
 	group, title := b.group(o), b.title(o)
 	id := "form:" + o.guid
 	switch {
-	case e.child != nil && e.child.find("module") != nil:
+	case contains(names, "module"):
 		// Обычная форма: контейнер с элементами form и module.
-		b.file.addTextElem(Section{ID: id, Group: group, Title: title, Kind: "module", Editable: true}, e.child.find("module"))
-	case o.isTemplate || strings.HasPrefix(string(e.payload), "MOXCEL"):
-		b.template(o, e, group, title)
-	case o.isForm || (!b.isConfig && strings.HasPrefix(strings.TrimPrefix(string(e.payload), bom), "{")):
-		b.file.addManagedForm(id, group, title, e)
+		b.file.addPart(Section{ID: id, Group: group, Title: title, Kind: "module", Editable: true}, innerText(e, "module"))
+	case names != nil:
+		// другой вложенный контейнер — показывать нечего
+	case o.isTemplate || info.moxcel:
+		b.template(o, e, info, group, title)
+	case o.isForm || (!b.isConfig && info.brace):
+		b.file.addPart(Section{ID: id, Group: group, Title: title, Kind: "module", Editable: true}, managedForm(e))
 	}
 }
 
-func (b *v8Builder) template(o *v8Object, e *v8Elem, group, title string) {
+func (b *v8Builder) template(o *v8Object, e *v8Elem, info partInfo, group, title string) {
 	sec := Section{ID: "tpl:" + o.guid, Group: group, Title: title, Kind: "text"}
-	payload := string(e.payload)
 	switch {
-	case strings.HasPrefix(payload, "MOXCEL") || o.tplType == tplSpreadsheet:
+	case info.moxcel || o.tplType == tplSpreadsheet:
 		sec.Note = "Табличный документ. Его оформление открывается только в 1С; ниже — текст ячеек."
-		sec.Text = moxcelText(e.payload)
+		b.file.addPart(sec, part{load: func() (SectionContent, error) {
+			if err := e.load(); err != nil {
+				return SectionContent{}, err
+			}
+			defer e.unload()
+			return SectionContent{Text: moxcelText(e.payload)}, nil
+		}})
 	case o.tplType == tplPicture:
 		return // картинка — показывать нечего
 	default:
 		// Текстовый макет, схема компоновки данных или XML. У схем перед XML
 		// бывает служебный двоичный заголовок — его сохраняем как есть.
-		start := 0
-		if i := strings.Index(payload[:min(len(payload), 256)], "<?xml"); i >= 0 {
-			start = i
+		if info.xml {
 			sec.Note = "Схема компоновки данных или XML-макет."
-		} else if strings.HasPrefix(payload, bom) {
-			start = len(bom)
 		}
-		text := payload[start:]
-		if o.tplType == tplDCS && start == 0 || !isMostlyText([]byte(text[:min(len(text), 4096)])) {
+		if o.tplType == tplDCS && !info.xml || !info.mostlyText {
 			return
 		}
-		sec.Text = normalizeEOL(text)
-		if looksLikeCode(text) && sec.Note == "" {
+		if info.code && sec.Note == "" {
 			sec.Kind = "module" // текстовый макет с кодом 1С — с подсветкой
 		}
 		sec.Editable = true
-		head := e.payload[:start]
-		b.file.setters[sec.ID] = func(newText string) {
-			e.payload = append(append([]byte{}, head...), windowsEOL(newText)...)
-			e.dirty = true
-		}
+		b.file.addPart(sec, textTemplate(e))
 	}
-	b.file.Doc.Sections = append(b.file.Doc.Sections, sec)
+}
+
+// textStart — где в макете начинается текст: после служебного заголовка схемы или BOM.
+func textStart(payload string) int {
+	if i := strings.Index(payload[:min(len(payload), 256)], "<?xml"); i >= 0 {
+		return i
+	}
+	if strings.HasPrefix(payload, bom) {
+		return len(bom)
+	}
+	return 0
 }
 
 // help — справка внешней обработки: HTML в base64 внутри «<id>.1».
-func (b *v8Builder) help() {
+func (b *v8Builder) help() error {
 	for prefix, in := range b.internal {
 		if in.owner != b.top {
 			continue
@@ -409,15 +562,31 @@ func (b *v8Builder) help() {
 		if e == nil {
 			continue
 		}
-		if m := base64Re.FindStringSubmatch(string(e.payload)); m != nil {
-			if raw, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(m[1]), "")); err == nil {
-				if text := htmlToText(strings.TrimPrefix(string(raw), bom)); text != "" {
-					b.file.Doc.Sections = append(b.file.Doc.Sections, Section{ID: "help", Group: "Справка", Title: "Справка", Kind: "text", Text: text})
-					return
-				}
-			}
+		if err := e.load(); err != nil {
+			return err
+		}
+		text := helpText(e.payload)
+		e.unload()
+		if text != "" {
+			b.file.addPart(Section{ID: "help", Group: "Справка", Title: "Справка", Kind: "text"}, part{
+				load: func() (SectionContent, error) { return SectionContent{Text: text}, nil },
+			})
+			return nil
 		}
 	}
+	return nil
+}
+
+func helpText(payload []byte) string {
+	m := base64Re.FindSubmatch(payload)
+	if m == nil {
+		return ""
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(string(m[1])), ""))
+	if err != nil {
+		return ""
+	}
+	return htmlToText(strings.TrimPrefix(string(raw), bom))
 }
 
 // sort — группы в порядке Конфигуратора, внутри — по алфавиту, модуль объекта первым.
@@ -426,26 +595,144 @@ func (b *v8Builder) sort() {
 	if b.isConfig {
 		order = configGroupOrder
 	}
-	rank := func(g string) int {
-		for i, x := range order {
-			if x == g {
-				return i
-			}
+	rank := make(map[string]int, len(order))
+	for i, x := range order {
+		rank[x] = i
+	}
+	rankOf := func(g string) int {
+		if r, ok := rank[g]; ok {
+			return r
 		}
 		return len(order)
 	}
-	secs := b.file.Doc.Sections
-	sort.SliceStable(secs, func(i, j int) bool {
-		gi, gj := rank(secs[i].Group), rank(secs[j].Group)
-		if gi != gj {
-			return gi < gj
+	f := b.file
+	idx := make([]int, len(f.Doc.Sections))
+	for i := range idx {
+		idx[i] = i
+	}
+	secs := f.Doc.Sections
+	sort.SliceStable(idx, func(i, j int) bool {
+		a, c := secs[idx[i]], secs[idx[j]]
+		if ga, gc := rankOf(a.Group), rankOf(c.Group); ga != gc {
+			return ga < gc
 		}
-		if secs[i].Group != secs[j].Group {
-			return secs[i].Group < secs[j].Group
+		if a.Group != c.Group {
+			return a.Group < c.Group
 		}
-		if (secs[i].ID == "object") != (secs[j].ID == "object") {
-			return secs[i].ID == "object"
+		if (a.ID == "object") != (c.ID == "object") {
+			return a.ID == "object"
 		}
-		return secs[i].Title < secs[j].Title
+		if ra, rc := configModuleRank(a.Title), configModuleRank(c.Title); ra != rc {
+			return ra < rc
+		}
+		return a.Title < c.Title
 	})
+	sorted := make([]Section, len(secs))
+	parts := make([]part, len(secs))
+	for i, k := range idx {
+		sorted[i], parts[i] = secs[k], f.parts[k]
+	}
+	f.Doc.Sections, f.parts = sorted, parts
+}
+
+// --- Загрузчики разделов -----------------------------------------------------------
+
+// innerText — модуль: элемент inner («text» или «module») во вложенном контейнере.
+func innerText(e *v8Elem, inner string) part {
+	find := func() (*v8Elem, error) {
+		if err := e.load(); err != nil {
+			return nil, err
+		}
+		if e.child == nil || e.child.find(inner) == nil {
+			return nil, fmt.Errorf("элемент %s: нет %s", e.Name, inner)
+		}
+		t := e.child.find(inner)
+		return t, t.load()
+	}
+	return part{
+		load: func() (SectionContent, error) {
+			defer e.unload()
+			t, err := find()
+			if err != nil {
+				return SectionContent{}, err
+			}
+			return SectionContent{Text: normalizeEOL(strings.TrimPrefix(string(t.payload), bom)), Editable: true}, nil
+		},
+		set: func(text string) error {
+			t, err := find()
+			if err != nil {
+				return err
+			}
+			out := windowsEOL(text)
+			if strings.HasPrefix(string(t.payload), bom) {
+				out = bom + out
+			}
+			t.payload, t.dirty = []byte(out), true
+			return nil
+		},
+	}
+}
+
+// formModuleSpan — где в описании управляемой формы строка с модулем.
+func formModuleSpan(form string) ([2]int, bool) {
+	for _, s := range stringsAtDepth(form, 1) {
+		if looksLikeCode(form[s[0]:s[1]]) {
+			return s, true
+		}
+	}
+	return [2]int{}, false
+}
+
+// managedForm — управляемая форма: модуль хранится строкой верхнего уровня
+// в скобочном описании формы.
+func managedForm(e *v8Elem) part {
+	return part{
+		load: func() (SectionContent, error) {
+			if err := e.load(); err != nil {
+				return SectionContent{}, err
+			}
+			defer e.unload()
+			form := string(e.payload)
+			span, ok := formModuleSpan(form)
+			if !ok {
+				return SectionContent{Note: "У этой формы нет модуля."}, nil
+			}
+			return SectionContent{Text: normalizeEOL(unquote(form[span[0]:span[1]])), Editable: true}, nil
+		},
+		set: func(text string) error {
+			if err := e.load(); err != nil {
+				return err
+			}
+			form := string(e.payload)
+			span, ok := formModuleSpan(form)
+			if !ok {
+				return errors.New("у этой формы нет модуля")
+			}
+			e.payload, e.dirty = []byte(form[:span[0]]+quote(windowsEOL(text))+form[span[1]:]), true
+			return nil
+		},
+	}
+}
+
+// textTemplate — текстовый макет или схема: служебный заголовок перед текстом
+// сохраняется как есть.
+func textTemplate(e *v8Elem) part {
+	return part{
+		load: func() (SectionContent, error) {
+			if err := e.load(); err != nil {
+				return SectionContent{}, err
+			}
+			defer e.unload()
+			payload := string(e.payload)
+			return SectionContent{Text: normalizeEOL(payload[textStart(payload):]), Editable: true}, nil
+		},
+		set: func(text string) error {
+			if err := e.load(); err != nil {
+				return err
+			}
+			head := e.payload[:textStart(string(e.payload))]
+			e.payload, e.dirty = append(append([]byte{}, head...), windowsEOL(text)...), true
+			return nil
+		},
+	}
 }

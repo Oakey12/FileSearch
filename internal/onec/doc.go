@@ -1,8 +1,11 @@
 package onec
 
 import (
+	"bufio"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,72 +18,142 @@ type Section struct {
 	Group    string `json:"group"` // «Модули», «Формы», «Макеты», «Справка», «Описание»
 	Title    string `json:"title"`
 	Kind     string `json:"kind"`           // module — код 1С, text — прочий текст
-	Text     string `json:"text,omitempty"` // у больших файлов текст запрашивается отдельно
-	Lines    int    `json:"lines"`
+	Text     string `json:"text,omitempty"` // у больших файлов пусто: текст — через Content
+	Lines    int    `json:"lines"`          // 0 — ещё не известно
 	Editable bool   `json:"editable"`
 	Note     string `json:"note,omitempty"`
 }
 
-// Document — разобранная обработка или отчёт.
+// SectionContent — текст раздела, прочитанный по запросу.
+type SectionContent struct {
+	Text     string `json:"text"`
+	Note     string `json:"note,omitempty"`
+	Lines    int    `json:"lines"`
+	Editable bool   `json:"editable"`
+}
+
+// Document — разобранный файл 1С.
 type Document struct {
 	Path     string    `json:"path"`
 	Name     string    `json:"name"`
 	Synonym  string    `json:"synonym,omitempty"`
-	Kind     string    `json:"kind"`   // «Внешняя обработка», «Внешний отчёт»
+	Kind     string    `json:"kind"`   // «Внешняя обработка», «Конфигурация» …
 	Format   string    `json:"format"` // «1С:Предприятие 8», «1С:Предприятие 7.7»
 	Sections []Section `json:"sections"`
 	CanSave  bool      `json:"canSave"` // можно сохранить правки обратно в файл этого формата
+	Lazy     bool      `json:"lazy,omitempty"`
 }
 
-// File — открытый файл: документ для показа и всё, что нужно для сохранения правок.
-type File struct {
-	Doc     Document
-	v8      *container
-	setters map[string]func(string) // id раздела → запись нового текста
+// part — как прочитать и как изменить раздел.
+type part struct {
+	load func() (SectionContent, error)
+	set  func(text string) error
+}
 
-	// 1С 7.7: исходный файл и новые тексты модулей (путь потока → текст).
-	ole77Path  string
+// File — открытый файл: документ для показа и всё, что нужно для чтения
+// разделов и сохранения правок. Безопасен только для одной горутины.
+type File struct {
+	Doc   Document
+	ctx   context.Context // отмена разбора (только на время Open)
+	src   *fileSource
+	v8    *container
+	parts []part // параллельно Doc.Sections
+
+	// 1С 7.7: новые тексты модулей (путь потока → текст).
 	ole77Edits map[string]string
 }
 
-const maxFileSize = 512 << 20
+// eagerLimit — файлы до этого размера читаются сразу целиком: у разделов
+// известны тексты и число строк. Больше — список сразу, тексты по запросу.
+var eagerLimit int64 = 32 << 20
 
-// Open читает .epf/.erf (1С 8) или .ert (1С 7.7).
+// Open читает файл 1С: .epf, .erf, .cf, .cfe (1С 8) или .ert, .md (1С 7.7).
+// Файл не читается в память целиком, поэтому подходит и для конфигураций
+// в сотни мегабайт.
 func Open(path string) (*File, error) {
-	info, err := os.Stat(path)
+	return OpenContext(context.Background(), path)
+}
+
+// OpenContext — Open с возможностью прервать разбор большого файла
+// (например, когда пользователь уже выбрал в списке другой файл).
+func OpenContext(ctx context.Context, path string) (*File, error) {
+	src, err := newFileSource(path)
 	if err != nil {
 		return nil, err
 	}
-	if info.Size() > maxFileSize {
-		return nil, errors.New("файл слишком большой")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
+	defer src.release()
+	head := make([]byte, min(int64(sniffSize), src.size))
+	if _, err := src.ReadAt(head, 0); err != nil && err != io.EOF {
 		return nil, err
 	}
-	var file *File
+	file := &File{src: src, ctx: ctx}
+	defer func() { file.ctx = nil }()
 	switch {
-	case IsV8(data):
-		file, err = openV8(path, data)
-	case IsOLE(data):
-		file, err = open77(path)
+	case IsV8(head):
+		root, err := openContainer(src, src.size, 0)
+		if err != nil {
+			return nil, err
+		}
+		err = openV8(path, file, root)
+		if err != nil {
+			return nil, err
+		}
+	case IsOLE(head):
+		if err := open77(path, file); err != nil {
+			return nil, err
+		}
 	default:
 		return nil, errors.New("это не файл 1С (ожидается .epf, .erf, .cf, .cfe, .ert или .md)")
 	}
-	if err != nil {
-		return nil, err
-	}
 	file.Doc.Path = path
+	if src.size > eagerLimit {
+		file.Doc.Lazy = true
+		return file, nil
+	}
 	for i := range file.Doc.Sections {
-		if t := file.Doc.Sections[i].Text; t != "" {
-			file.Doc.Sections[i].Lines = strings.Count(t, "\n") + 1
+		c, err := file.parts[i].content()
+		if err != nil {
+			return nil, err
+		}
+		s := &file.Doc.Sections[i]
+		s.Text, s.Lines = c.Text, c.Lines
+		if c.Note != "" {
+			s.Note, s.Editable = c.Note, c.Editable
 		}
 	}
 	return file, nil
 }
 
+func (p part) content() (SectionContent, error) {
+	if p.load == nil {
+		return SectionContent{}, nil
+	}
+	c, err := p.load()
+	if err != nil {
+		return c, err
+	}
+	if c.Text != "" {
+		c.Lines = strings.Count(c.Text, "\n") + 1
+	}
+	return c, nil
+}
+
+func (f *File) addPart(sec Section, p part) {
+	f.Doc.Sections = append(f.Doc.Sections, sec)
+	f.parts = append(f.parts, p)
+}
+
+func (f *File) indexOf(id string) int {
+	for i, s := range f.Doc.Sections {
+		if s.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
 // Outline — документ без текстов разделов: для конфигураций с тысячами модулей
-// интерфейс получает список, а текст модуля запрашивает при выборе (SectionText).
+// интерфейс получает список, а текст модуля запрашивает при выборе (Content).
 func (f *File) Outline() Document {
 	doc := f.Doc
 	doc.Sections = make([]Section, len(f.Doc.Sections))
@@ -91,29 +164,75 @@ func (f *File) Outline() Document {
 	return doc
 }
 
-// SectionText — текст раздела по id.
-func (f *File) SectionText(id string) (string, bool) {
-	for _, s := range f.Doc.Sections {
-		if s.ID == id {
-			return s.Text, true
-		}
+// Content — текст раздела. У больших файлов он читается с диска при каждом
+// запросе и в памяти не остаётся (кроме изменённых, ещё не сохранённых частей).
+func (f *File) Content(id string) (SectionContent, error) {
+	i := f.indexOf(id)
+	if i < 0 {
+		return SectionContent{}, errors.New("раздел не найден")
 	}
-	return "", false
+	s := f.Doc.Sections[i]
+	if !f.Doc.Lazy {
+		return SectionContent{Text: s.Text, Note: s.Note, Lines: s.Lines, Editable: s.Editable}, nil
+	}
+	defer f.release()
+	c, err := f.parts[i].content()
+	if err != nil {
+		return c, err
+	}
+	if c.Note == "" && c.Text == "" {
+		c.Note, c.Editable = s.Note, s.Editable && f.parts[i].set != nil
+	}
+	return c, nil
 }
 
-// ExtractText — все модули файла одним текстом (для поиска по содержимому).
-func ExtractText(path string) (string, error) {
+// SectionText — текст раздела по id (false — раздела нет или он не читается).
+func (f *File) SectionText(id string) (string, bool) {
+	c, err := f.Content(id)
+	return c.Text, err == nil
+}
+
+// release закрывает исходный файл до следующего обращения.
+func (f *File) release() {
+	if f.src != nil {
+		f.src.release()
+	}
+}
+
+// ExtractText — модули файла одним текстом (для поиска по содержимому),
+// не больше limit байт: у большой конфигурации читаются только первые модули.
+func ExtractText(path string, limit int) (string, error) {
 	f, err := Open(path)
 	if err != nil {
 		return "", err
 	}
+	defer f.release()
 	var b strings.Builder
-	for _, s := range f.Doc.Sections {
-		if s.Kind == "module" && s.Text != "" {
-			fmt.Fprintf(&b, "// ===== %s =====\n%s\n\n", s.Title, s.Text)
+	for i, s := range f.Doc.Sections {
+		if s.Kind != "module" {
+			continue
+		}
+		text := s.Text
+		if f.Doc.Lazy {
+			c, err := f.parts[i].content()
+			if err != nil {
+				continue // испорченный модуль не мешает искать в остальных
+			}
+			text = c.Text
+		}
+		if text == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "// ===== %s =====\n%s\n\n", s.Title, text)
+		if b.Len() >= limit {
+			break
 		}
 	}
-	return b.String(), nil
+	out := b.String()
+	if len(out) > limit {
+		out = strings.ToValidUTF8(out[:limit], "")
+	}
+	return out, nil
 }
 
 func baseName(path string) string {
@@ -125,55 +244,10 @@ func windowsEOL(s string) string   { return strings.ReplaceAll(normalizeEOL(s), 
 
 const bom = "\uFEFF"
 
-// --- 1С 8 --------------------------------------------------------------------
-
 var (
 	base64Re    = regexp.MustCompile(`#base64:([A-Za-z0-9+/=\s]+)`)
 	moxcelStrRe = regexp.MustCompile(`"((?:[^"]|""){2,})"`)
 )
-
-// addTextElem — раздел из элемента-текста (модуль объекта, модуль обычной формы).
-func (f *File) addTextElem(sec Section, e *v8Elem) {
-	hasBOM := strings.HasPrefix(string(e.payload), bom)
-	sec.Text = normalizeEOL(strings.TrimPrefix(string(e.payload), bom))
-	f.Doc.Sections = append(f.Doc.Sections, sec)
-	f.setters[sec.ID] = func(text string) {
-		out := windowsEOL(text)
-		if hasBOM {
-			out = bom + out
-		}
-		e.payload = []byte(out)
-		e.dirty = true
-	}
-}
-
-// addManagedForm — управляемая форма: модуль хранится строкой верхнего уровня
-// в скобочном описании формы.
-func (f *File) addManagedForm(id, group, title string, e *v8Elem) {
-	form := string(e.payload)
-	var span [2]int
-	found := false
-	for _, s := range stringsAtDepth(form, 1) {
-		if looksLikeCode(form[s[0]:s[1]]) {
-			span, found = s, true
-			break
-		}
-	}
-	sec := Section{ID: id, Group: group, Title: title, Kind: "module"}
-	if !found {
-		sec.Note = "У этой формы нет модуля."
-		f.Doc.Sections = append(f.Doc.Sections, sec)
-		return
-	}
-	sec.Text = normalizeEOL(unquote(form[span[0]:span[1]]))
-	sec.Editable = true
-	f.Doc.Sections = append(f.Doc.Sections, sec)
-	f.setters[sec.ID] = func(text string) {
-		current := string(e.payload)
-		e.payload = []byte(current[:span[0]] + quote(windowsEOL(text)) + current[span[1]:])
-		e.dirty = true
-	}
-}
 
 // looksLikeCode — строка похожа на модуль 1С (а не на заголовок или имя).
 func looksLikeCode(s string) bool {
@@ -210,75 +284,84 @@ func moxcelText(b []byte) string {
 
 // --- Сохранение -------------------------------------------------------------------
 
-// SaveTo применяет правки и записывает файл в исходном формате (.epf/.erf или .ert).
+// SaveTo применяет правки и записывает файл в исходном формате.
 // Запись атомарная: сначала во временный файл рядом, затем переименование, —
 // так прерванное сохранение не испортит существующий файл. dst может совпадать
-// с исходным файлом.
+// с исходным файлом. Нетронутые части копируются из исходного файла потоком.
 func (f *File) SaveTo(dst string, edits map[string]string) error {
 	tmp := dst + ".tmp-filesearch"
 	defer os.Remove(tmp)
-
-	if f.v8 != nil {
-		data, err := f.Save(edits)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(tmp, data, 0o644); err != nil {
-			return err
-		}
-	} else {
-		if err := f.applyEdits(edits); err != nil {
-			return err
+	if err := f.applyEdits(edits); err != nil {
+		return err
+	}
+	err := func() error {
+		defer f.release() // исходный файл должен быть закрыт до переименования
+		if f.v8 != nil {
+			return writeFile(tmp, f.v8.writeTo)
 		}
 		if len(f.ole77Edits) == 0 {
-			// Модули не меняли — копия исходного файла.
-			data, err := os.ReadFile(f.ole77Path)
+			return writeFile(tmp, func(w io.Writer) error {
+				_, err := io.Copy(w, io.NewSectionReader(f.src, 0, f.src.size))
+				return err
+			})
+		}
+		streams := map[string][]byte{}
+		for path, text := range f.ole77Edits {
+			packed, err := deflate(encode1251(windowsEOL(text)))
 			if err != nil {
 				return err
 			}
-			if err := os.WriteFile(tmp, data, 0o644); err != nil {
-				return err
-			}
-		} else {
-			streams := map[string][]byte{}
-			for path, text := range f.ole77Edits {
-				packed, err := deflate(encode1251(windowsEOL(text)))
-				if err != nil {
-					return err
-				}
-				streams[path] = packed
-			}
-			if err := writeOLE(f.ole77Path, tmp, streams); err != nil {
-				return err
-			}
+			streams[path] = packed
 		}
+		f.release()
+		return writeOLE(f.src.path, tmp, streams)
+	}()
+	if err != nil {
+		return err
 	}
 	return os.Rename(tmp, dst)
 }
 
+// writeFile записывает файл через буфер и проверяет закрытие.
+func writeFile(path string, write func(io.Writer) error) error {
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	w := bufio.NewWriterSize(out, 1<<20)
+	if err := write(w); err != nil {
+		out.Close()
+		return err
+	}
+	if err := w.Flush(); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
+}
+
 func (f *File) applyEdits(edits map[string]string) error {
 	for id, text := range edits {
-		set, ok := f.setters[id]
-		if !ok {
+		i := f.indexOf(id)
+		if i < 0 || f.parts[i].set == nil {
 			return fmt.Errorf("раздел %q нельзя изменить", id)
 		}
-		set(text)
+		if err := f.parts[i].set(text); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// Save применяет правки к контейнеру 1С 8 и возвращает новый файл.
-// Неизменённые элементы переносятся побайтно.
+// Save применяет правки к контейнеру 1С 8 и возвращает новый файл целиком
+// (для небольших файлов и тестов; большие сохраняет SaveTo).
 func (f *File) Save(edits map[string]string) ([]byte, error) {
 	if f.v8 == nil {
 		return nil, errors.New("это не контейнер 1С 8")
 	}
-	for id, text := range edits {
-		set, ok := f.setters[id]
-		if !ok {
-			return nil, fmt.Errorf("раздел %q нельзя изменить", id)
-		}
-		set(text)
+	defer f.release()
+	if err := f.applyEdits(edits); err != nil {
+		return nil, err
 	}
 	return f.v8.bytes()
 }

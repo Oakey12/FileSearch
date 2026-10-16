@@ -93,9 +93,9 @@ func Extract(path string, limit int) (text string, err error) {
 			}
 			break
 		}
-		if text, err = onec.ExtractText(path); err == nil && len(text) > limit {
-			text = string(trimPartialRune([]byte(text[:limit])))
-		}
+		// Модули читаются по одному, пока не наберётся limit: у большой
+		// конфигурации не распаковываются все тысячи модулей.
+		text, err = onec.ExtractText(path, limit)
 	default:
 		if !textExtensions[ext] {
 			return "", errors.New("формат не поддерживается")

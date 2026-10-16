@@ -1,15 +1,31 @@
 // Панель предпросмотра справа (как Quick Look в macOS).
 // Содержимое файлов вставляется только через textContent.
 
+import { renderBSL } from './bsl'
 import { isOneCFile } from './decoder'
-import { formatLongDate, formatSize, kindOf } from './format'
+import { formatCount, formatLongDate, formatSize, kindOf, plural } from './format'
 import { highlightInto, normalize } from './highlight'
 import type { FileItem } from './list'
 
 export interface PreviewSheet { name: string; rows: string[][]; truncated?: boolean }
 
+/** Сводка по файлу 1С: что это, из чего состоит, начало главного модуля. */
+export interface OneCSummary {
+  kind: string
+  format: string
+  name: string
+  synonym?: string
+  sections: number
+  modules: number
+  groups: { name: string; count: number }[]
+  main?: { title: string; text: string; lines: number; truncated?: boolean }
+}
+
+/** Сколько групп показывать сразу; остальные — «ещё N». */
+const ONEC_GROUPS_SHOWN = 8
+
 export interface PreviewResult {
-  kind: 'text' | 'image' | 'sheet' | 'pdf' | 'info'
+  kind: 'text' | 'image' | 'sheet' | 'pdf' | 'info' | 'onec'
   path: string
   name: string
   ext: string
@@ -21,6 +37,7 @@ export interface PreviewResult {
   sheets?: PreviewSheet[]
   note?: string
   url?: string
+  onec?: OneCSummary
 }
 
 export interface InspectorActions {
@@ -70,18 +87,20 @@ export class Inspector {
 
   show(item: FileItem, result: PreviewResult): void {
     this.body.replaceChildren(
-      this.header(item),
+      this.header(item, result),
       this.view(result),
       this.meta(item, result),
       this.buttons(item, result),
     )
   }
 
-  private header(item: FileItem): HTMLElement {
+  private header(item: FileItem, result?: PreviewResult): HTMLElement {
     const head = el('header', 'qs-head')
     const titles = el('div', 'qs-titles')
-    titles.append(el('h2', 'qs-name', item.name), el('p', 'qs-kind', kindOf(item.ext).label))
-    head.append(fileIcon(item.ext, 'qs-icon'), titles)
+    // .md бывает конфигурацией 1С 7.7 — тогда это не «Текст».
+    const onec = result?.kind === 'onec'
+    titles.append(el('h2', 'qs-name', item.name), el('p', 'qs-kind', onec ? 'Файл 1С' : kindOf(item.ext).label))
+    head.append(fileIcon(onec ? 'epf' : item.ext, 'qs-icon'), titles)
     return head
   }
 
@@ -118,12 +137,58 @@ export class Inspector {
       }
       case 'sheet':
         return this.sheets(result.sheets ?? [])
+      case 'onec':
+        return this.oneC(result.onec!)
       default: {
         const view = el('div', 'qs-view qs-message')
         view.append(fileIcon(result.ext, 'qs-big-icon'), el('p', 'qs-dim', result.note ?? ''))
         return view
       }
     }
+  }
+
+  /** Файл 1С: карточка (вид, имя, состав по группам) и начало главного модуля. */
+  private oneC(s: OneCSummary): HTMLElement {
+    const view = el('div', 'qs-view qs-onec')
+    const card = el('section', 'onec-card')
+    card.append(el('p', 'onec-kind', `${s.kind} · ${s.format}`), el('h3', 'onec-title', s.synonym || s.name))
+    if (s.synonym && s.synonym !== s.name) card.append(el('p', 'onec-name', s.name))
+    const stats = [`${formatCount(s.modules)} ${plural(s.modules, 'модуль', 'модуля', 'модулей')}`]
+    if (s.sections > s.modules) {
+      const other = s.sections - s.modules
+      stats.push(`${formatCount(other)} ${plural(other, 'макет или справка', 'макета или справки', 'макетов или справок')}`)
+    }
+    card.append(el('p', 'onec-stats', stats.join(', ')))
+
+    if (s.groups.length > 1) {
+      const list = el('ul', 'onec-groups')
+      list.setAttribute('aria-label', 'Состав')
+      for (const g of s.groups.slice(0, ONEC_GROUPS_SHOWN)) {
+        const item = el('li', 'onec-group')
+        item.append(el('span', 'onec-group-name', g.name), el('span', 'onec-group-count', formatCount(g.count)))
+        list.append(item)
+      }
+      const rest = s.groups.length - ONEC_GROUPS_SHOWN
+      if (rest > 0) list.append(el('li', 'onec-group onec-group-more', `ещё ${rest} ${plural(rest, 'группа', 'группы', 'групп')}`))
+      card.append(list)
+    }
+    view.append(card)
+
+    if (!s.main) {
+      view.append(el('p', 'qs-dim onec-empty', 'Модули сохранены без исходного текста — показать нечего.'))
+      return view
+    }
+    const code = el('section', 'onec-code')
+    const head = el('header', 'onec-code-head')
+    head.append(el('span', 'onec-code-title', s.main.title), el('span', 'onec-code-meta', `${formatCount(s.main.lines)} стр.`))
+    const paper = el('div', 'qs-paper paper-scroll onec-paper')
+    const pre = el('pre', 'paper-text onec-pre')
+    renderBSL(pre, s.main.text)
+    paper.append(pre)
+    code.append(head, paper)
+    if (s.main.truncated) code.append(el('p', 'onec-more', 'Показано начало модуля. Целиком — в декодере.'))
+    view.append(code)
+    return view
   }
 
   private sheets(sheets: PreviewSheet[]): HTMLElement {
@@ -210,7 +275,7 @@ export class Inspector {
     add('Размер', formatSize(item.size))
     add('Изменён', formatLongDate(item.mod))
     add('Папка', item.dir)
-    if (result?.encoding) add('Кодировка', result.encoding)
+    if (result?.encoding && result.kind !== 'onec') add('Кодировка', result.encoding)
     if (result?.truncated || result?.sheets?.some((s) => s.truncated)) add('Показано', result.kind === 'sheet'
       ? 'Первые 500 строк и 50 столбцов'
       : 'Первый 1 МБ текста')
