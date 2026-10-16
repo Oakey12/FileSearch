@@ -89,6 +89,19 @@ func cutMFCLength(b []byte) []byte {
 	return b
 }
 
+// encode1251 переводит текст в Windows-1251; символы, которых в ней нет, — «?».
+func encode1251(s string) []byte {
+	out := make([]byte, 0, len(s))
+	for _, r := range s {
+		if b, ok := charmap.Windows1251.EncodeRune(r); ok {
+			out = append(out, b)
+		} else {
+			out = append(out, '?')
+		}
+	}
+	return out
+}
+
 func cp1251(b []byte) string {
 	s, err := charmap.Windows1251.NewDecoder().Bytes(b)
 	if err != nil {
@@ -102,7 +115,7 @@ func openERT(path string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	file := &File{setters: map[string]func(string){}}
+	file := &File{setters: map[string]func(string){}, ertPath: path}
 	doc := &file.Doc
 	doc.Format = "1С:Предприятие 7.7"
 	doc.Kind = "Внешняя обработка или отчёт"
@@ -119,6 +132,13 @@ func openERT(path string) (*File, error) {
 				sec.Text = normalizeEOL(cp1251(text))
 			} else {
 				sec.Note = "Модуль не удалось прочитать: возможно, он защищён паролем."
+				sec.Editable = false
+			}
+			// Записывать умеем модуль в корне файла — там он у внешних обработок 7.7.
+			if sec.Editable && s.path == ertModuleStream {
+				doc.CanSave = true
+				file.setters["module"] = func(text string) { file.ertModule = &text }
+			} else {
 				sec.Editable = false
 			}
 			doc.Sections = append([]Section{sec}, doc.Sections...)
@@ -141,8 +161,6 @@ func openERT(path string) (*File, error) {
 	if len(doc.Sections) == 0 {
 		return nil, errors.New("в файле нет модуля 1С 7.7")
 	}
-	// Запись обратно в .ert (OLE) пока не поддерживается — модуль сохраняется в текстовый файл.
-	doc.CanSave = false
 	return file, nil
 }
 

@@ -225,7 +225,7 @@ func TestOpenERT(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc := f.Doc
-	if doc.Format != "1С:Предприятие 7.7" || doc.Name != "sample77" || doc.CanSave {
+	if doc.Format != "1С:Предприятие 7.7" || doc.Name != "sample77" || !doc.CanSave {
 		t.Fatalf("шапка: %+v", doc)
 	}
 	module := section(t, doc, "module")
@@ -239,12 +239,73 @@ func TestOpenERT(t *testing.T) {
 	if !strings.Contains(section(t, doc, "streams").Text, "Container.Contents") {
 		t.Error("в составе файла нет служебных потоков")
 	}
-	if _, err := f.Save(map[string]string{"module": "x"}); err == nil {
-		t.Error("запись в .ert пока не поддерживается — ожидалась ошибка")
-	}
 	text, err := ExtractText(filepath.Join("testdata", "sample77.ert"))
 	if err != nil || !strings.Contains(text, "Отчёт сформирован") {
 		t.Errorf("текст для поиска: %q, %v", text, err)
+	}
+}
+
+func copyFile(t *testing.T, src, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writeTemp(t, name, data)
+}
+
+// .ert сохраняется в .ert: меняется только модуль, остальное копируется как есть.
+func TestSaveERT(t *testing.T) {
+	src := copyFile(t, filepath.Join("testdata", "sample77.ert"), "sample77.ert")
+	f, err := Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newModule := "Процедура Сформировать()\n\tСообщить(\"Ёлка и смайлик 😀\");\nКонецПроцедуры\n"
+	dst := filepath.Join(filepath.Dir(src), "сохранённый.ert")
+	if err := f.SaveTo(dst, map[string]string{"module": newModule}); err != nil {
+		t.Fatal(err)
+	}
+
+	g, err := Open(dst)
+	if err != nil {
+		t.Fatalf("сохранённый .ert не открывается: %v", err)
+	}
+	// Смайлика нет в Windows-1251 — он заменяется на «?», остальное сохраняется.
+	want := strings.Replace(newModule, "😀", "?", 1)
+	if got := section(t, g.Doc, "module").Text; got != want {
+		t.Errorf("модуль после сохранения: %q", got)
+	}
+	if section(t, g.Doc, "dialog").Text != section(t, f.Doc, "dialog").Text {
+		t.Error("описание формы изменилось, хотя его не трогали")
+	}
+	if section(t, g.Doc, "streams").Text != section(t, f.Doc, "streams").Text {
+		t.Error("состав файла изменился")
+	}
+	if _, err := os.Stat(dst + ".tmp-filesearch"); !os.IsNotExist(err) {
+		t.Error("временный файл не удалён")
+	}
+}
+
+// «Сохранить» поверх исходного файла: файл заменяется атомарно.
+func TestSaveToOverwrite(t *testing.T) {
+	path := writeTemp(t, "a.epf", sampleEPF(t))
+	f, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SaveTo(path, map[string]string{"object": "// перезаписано\n"}); err != nil {
+		t.Fatal(err)
+	}
+	g, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := section(t, g.Doc, "object").Text; got != "// перезаписано\n" {
+		t.Errorf("после перезаписи: %q", got)
+	}
+	if section(t, g.Doc, "form:"+formGUID).Text != formCode {
+		t.Error("модуль формы изменился, хотя его не трогали")
 	}
 }
 

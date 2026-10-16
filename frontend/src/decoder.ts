@@ -75,6 +75,11 @@ export class Decoder {
   private editButton = byId<HTMLButtonElement>('decoderEdit')
   private revertButton = byId<HTMLButtonElement>('decoderRevert')
   private saveButton = byId<HTMLButtonElement>('decoderSave')
+  private saveAsButton = byId<HTMLButtonElement>('decoderSaveAs')
+  private backButton = byId<HTMLButtonElement>('decoderBack')
+  private actions = document.querySelector<HTMLDivElement>('.decoder-actions')!
+  private recentBox = byId<HTMLDivElement>('decoderRecent')
+  private recentList = byId<HTMLUListElement>('decoderRecentList')
   private findInput = byId<HTMLInputElement>('codeFind')
   private findCount = byId<HTMLSpanElement>('codeFindCount')
 
@@ -87,6 +92,8 @@ export class Decoder {
     this.editButton.addEventListener('click', () => this.setEditing(!this.editing))
     this.revertButton.addEventListener('click', () => this.revert())
     this.saveButton.addEventListener('click', () => void this.save())
+    this.saveAsButton.addEventListener('click', () => void this.saveAs())
+    this.backButton.addEventListener('click', () => this.close())
     this.nav.addEventListener('click', (e) => {
       const item = (e.target as HTMLElement).closest<HTMLElement>('[data-id]')
       if (item) this.show(item.dataset.id!)
@@ -119,7 +126,7 @@ export class Decoder {
         this.findInput.select()
       } else if (e.ctrlKey && e.code === 'KeyS') {
         e.preventDefault()
-        void this.save()
+        void (e.shiftKey ? this.saveAs() : this.save())
       }
     })
     this.renderEmpty()
@@ -150,6 +157,7 @@ export class Decoder {
   private storeRecent(list: string[]): void {
     try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)) } catch { /* без хранилища — не страшно */ }
     this.onRecentChange?.()
+    if (!this.doc) this.renderEmpty()
   }
 
   get currentPath(): string {
@@ -167,9 +175,24 @@ export class Decoder {
     }
   }
 
-  async open(path: string): Promise<boolean> {
-    if (this.hasChanges && this.doc && this.doc.path !== path &&
-      !confirm(`В «${this.doc.name}» есть несохранённые правки. Открыть другой файл и потерять их?`)) {
+  /** Можно ли уйти от текущего файла: несохранённые правки — только с согласия. */
+  private confirmDiscard(action: string): boolean {
+    return !this.hasChanges || !this.doc ||
+      confirm(`В «${this.doc.name}» есть несохранённые правки. ${action} и потерять их?`)
+  }
+
+  /** Вернуться на стартовый экран декодера. */
+  close(): void {
+    if (!this.confirmDiscard('Закрыть файл')) return
+    this.doc = null
+    this.edits.clear()
+    this.editing = false
+    this.renderEmpty()
+    this.onRecentChange?.()
+  }
+
+  async open(path: string, force = false): Promise<boolean> {
+    if (!force && this.doc?.path !== path && !this.confirmDiscard('Открыть другой файл')) {
       return false
     }
     try {
@@ -193,8 +216,28 @@ export class Decoder {
   private renderEmpty(): void {
     this.empty.hidden = false
     this.body.hidden = true
+    this.backButton.hidden = true
+    this.actions.hidden = true // кнопкам сохранения нечего делать без открытого файла
     this.title.textContent = 'Декодер 1С'
     this.meta.textContent = 'Внешние обработки и отчёты 1С:Предприятия 8 и 7.7'
+    this.saveButton.disabled = this.saveAsButton.disabled = true
+    byId<HTMLButtonElement>('decoderSaveText').disabled = true
+    byId<HTMLButtonElement>('decoderReveal').disabled = true
+
+    // Стартовый экран: недавние файлы — открыть одним щелчком.
+    const recent = this.recent()
+    this.recentBox.hidden = !recent.length
+    this.recentList.replaceChildren(...recent.map((path) => {
+      const li = el('li')
+      const b = el('button', 'decoder-recent-item')
+      b.type = 'button'
+      b.title = path
+      b.innerHTML = '<svg><use href="#i-onec"/></svg>'
+      b.append(el('span', 'decoder-recent-name', baseName(path)), el('span', 'decoder-recent-path', path))
+      b.addEventListener('click', () => void this.open(path).then(() => this.onRecentChange?.()))
+      li.append(b)
+      return li
+    }))
   }
 
   private render(): void {
@@ -202,6 +245,10 @@ export class Decoder {
     if (!doc) return this.renderEmpty()
     this.empty.hidden = true
     this.body.hidden = false
+    this.backButton.hidden = false
+    this.actions.hidden = false
+    byId<HTMLButtonElement>('decoderSaveText').disabled = false
+    byId<HTMLButtonElement>('decoderReveal').disabled = false
     this.title.textContent = doc.synonym && doc.synonym !== doc.name ? `${doc.name} — ${doc.synonym}` : doc.name
     this.meta.textContent = `${doc.kind}, ${doc.format}. ${baseName(doc.path)}`
     this.renderNav()
@@ -270,10 +317,12 @@ export class Decoder {
     this.editButton.setAttribute('aria-pressed', String(this.editing))
     this.editButton.textContent = this.editing ? 'Готово' : 'Изменить'
     this.revertButton.hidden = !s || !this.edits.has(s.id)
-    this.saveButton.disabled = !doc?.canSave || !this.hasChanges
+    const ext = doc ? doc.path.slice(doc.path.lastIndexOf('.')) : ''
+    this.saveButton.disabled = this.saveAsButton.disabled = !doc?.canSave || !this.hasChanges
     this.saveButton.title = doc && !doc.canSave
-      ? 'Запись обратно в .ert пока не поддерживается — сохраните модуль в файл .bsl'
-      : 'Сохранить правки в новый файл (Ctrl+S). Исходный файл не меняется'
+      ? 'Этот файл нельзя записать: модуль не прочитан (возможно, защищён паролем)'
+      : `Сохранить правки в этот же файл ${ext} (Ctrl+S). Копия исходника — в резервных копиях`
+    this.saveAsButton.title = `Сохранить правки в новый файл ${ext} (Ctrl+Shift+S)`
   }
 
   // --- Правка -----------------------------------------------------------
@@ -318,13 +367,33 @@ export class Decoder {
     toast('Правки модуля отменены')
   }
 
+  /** «Сохранить»: правки — в этот же файл и в том же формате. */
   private async save(): Promise<void> {
+    const doc = this.doc
+    if (!doc || !doc.canSave || !this.hasChanges) return
+    const keep = this.currentId
+    try {
+      const backup = await Go.SaveOneCInPlace(doc.path, Object.fromEntries(this.edits))
+      this.edits.clear()
+      await this.open(doc.path, true) // перечитать файл с диска — показываем то, что записано
+      this.show(keep)
+      toast(`Сохранено в «${baseName(doc.path)}». Исходник — в резервных копиях`, 'Показать копию', () => void Go.ShowInExplorer(backup))
+    } catch (err) {
+      toast(String(err))
+    }
+  }
+
+  /** «Сохранить как…»: правки — в новый файл того же формата. */
+  private async saveAs(): Promise<void> {
     const doc = this.doc
     if (!doc || !doc.canSave || !this.hasChanges) return
     try {
       const target = await Go.SaveOneC(doc.path, Object.fromEntries(this.edits))
       if (!target) return
-      toast(`Сохранено: ${baseName(target)}`, 'Показать в Проводнике', () => void Go.ShowInExplorer(target))
+      toast(`Сохранено: ${baseName(target)}`, 'Открыть', () => {
+        this.edits.clear()
+        void this.open(target, true)
+      })
     } catch (err) {
       toast(String(err))
     }

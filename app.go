@@ -5,10 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -50,15 +52,12 @@ type App struct {
 
 	updateMu sync.Mutex
 	release  *update.Release
-
-	onecMu    sync.Mutex
-	onecFiles map[string]*onec.File // открытые в декодере файлы
 }
 
 const maxFiles = 32
 
 func NewApp() *App {
-	return &App{files: map[string]string{}, docs: content.NewCache(docsCacheSize), onecFiles: map[string]*onec.File{}}
+	return &App{files: map[string]string{}, docs: content.NewCache(docsCacheSize)}
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -248,45 +247,92 @@ func (a *App) OpenOneC(path string) (onec.Document, error) {
 	if err != nil {
 		return onec.Document{}, err
 	}
-	a.onecMu.Lock()
-	a.onecFiles[path] = f
-	a.onecMu.Unlock()
 	return f.Doc, nil
 }
 
-// SaveOneC сохраняет правки модулей в новый файл того же формата и возвращает его путь.
-// Пустая строка — пользователь закрыл окно сохранения.
+// SaveOneC («Сохранить как…») записывает правки в новый файл того же формата
+// (.epf → .epf, .ert → .ert) и возвращает его путь. Пустая строка — окно закрыли.
 func (a *App) SaveOneC(path string, edits map[string]string) (string, error) {
-	a.onecMu.Lock()
-	f := a.onecFiles[path]
-	a.onecMu.Unlock()
-	if f == nil {
-		return "", errors.New("файл не открыт в декодере")
-	}
 	ext := filepath.Ext(path)
 	target, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:            "Сохранить как новый файл",
+		Title:            "Сохранить как",
 		DefaultDirectory: filepath.Dir(path),
 		DefaultFilename:  strings.TrimSuffix(filepath.Base(path), ext) + " (изменённый)" + ext,
-		Filters:          onecFilters,
+		Filters:          []runtime.FileFilter{{DisplayName: "Тот же формат (*" + ext + ")", Pattern: "*" + ext}},
 	})
 	if err != nil || target == "" {
 		return "", err
 	}
+	if !strings.EqualFold(filepath.Ext(target), ext) {
+		target += ext // формат файла не меняется
+	}
 	if strings.EqualFold(filepath.Clean(target), filepath.Clean(path)) {
-		return "", errors.New("сохраните под другим именем — исходный файл не перезаписывается")
+		return a.SaveOneCInPlace(path, edits)
 	}
-	// Правки накладываются на свежую копию, чтобы исходный разбор остался нетронутым.
-	fresh, err := onec.Open(path)
+	return target, a.saveOneC(path, target, edits)
+}
+
+// SaveOneCInPlace («Сохранить») записывает правки в исходный файл. Перед этим
+// исходник копируется в %APPDATA%\FileSearch\Резервные копии. Возвращает путь копии.
+func (a *App) SaveOneCInPlace(path string, edits map[string]string) (string, error) {
+	backup, err := backupFile(path)
+	if err != nil {
+		return "", fmt.Errorf("не удалось сделать резервную копию, файл не изменён: %w", err)
+	}
+	if err := a.saveOneC(path, path, edits); err != nil {
+		return "", err
+	}
+	return backup, nil
+}
+
+func (a *App) saveOneC(src, dst string, edits map[string]string) error {
+	// Правки накладываются на свежий разбор файла с диска.
+	f, err := onec.Open(src)
+	if err != nil {
+		return err
+	}
+	if err := f.SaveTo(dst, edits); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return errors.New("файл занят другой программой (например, открыт в 1С) или нет прав на запись")
+		}
+		return err
+	}
+	return nil
+}
+
+const maxBackups = 50
+
+// backupFile копирует файл в папку резервных копий и оставляет не больше maxBackups копий.
+func backupFile(path string) (string, error) {
+	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	data, err := fresh.Save(edits)
+	dir = filepath.Join(dir, "FileSearch", "Резервные копии")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
+	ext := filepath.Ext(path)
+	name := strings.TrimSuffix(filepath.Base(path), ext) + " " + time.Now().Format("2006-01-02 15-04-05") + ext
+	target := filepath.Join(dir, name)
 	if err := os.WriteFile(target, data, 0o644); err != nil {
 		return "", err
+	}
+
+	entries, _ := os.ReadDir(dir)
+	if len(entries) > maxBackups {
+		sort.Slice(entries, func(i, j int) bool {
+			ii, _ := entries[i].Info()
+			jj, _ := entries[j].Info()
+			return ii.ModTime().Before(jj.ModTime())
+		})
+		for _, e := range entries[:len(entries)-maxBackups] {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
 	}
 	return target, nil
 }

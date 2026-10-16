@@ -38,6 +38,10 @@ type File struct {
 	Doc     Document
 	v8      *container
 	setters map[string]func(string) // id раздела → запись нового текста
+
+	// 1С 7.7: исходный файл и новый текст модуля (nil — модуль не меняли).
+	ertPath   string
+	ertModule *string
 }
 
 const maxFileSize = 512 << 20
@@ -280,11 +284,64 @@ func moxcelText(b []byte) string {
 
 // --- Сохранение -------------------------------------------------------------------
 
-// Save применяет правки (id раздела → новый текст) и возвращает новый файл.
+// SaveTo применяет правки и записывает файл в исходном формате (.epf/.erf или .ert).
+// Запись атомарная: сначала во временный файл рядом, затем переименование, —
+// так прерванное сохранение не испортит существующий файл. dst может совпадать
+// с исходным файлом.
+func (f *File) SaveTo(dst string, edits map[string]string) error {
+	tmp := dst + ".tmp-filesearch"
+	defer os.Remove(tmp)
+
+	if f.v8 != nil {
+		data, err := f.Save(edits)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(tmp, data, 0o644); err != nil {
+			return err
+		}
+	} else {
+		if err := f.applyEdits(edits); err != nil {
+			return err
+		}
+		if f.ertModule == nil {
+			// Модуль не меняли — копия исходного файла.
+			data, err := os.ReadFile(f.ertPath)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(tmp, data, 0o644); err != nil {
+				return err
+			}
+		} else {
+			packed, err := deflate(encode1251(windowsEOL(*f.ertModule)))
+			if err != nil {
+				return err
+			}
+			if err := writeERT(f.ertPath, tmp, ertModuleStream, packed); err != nil {
+				return err
+			}
+		}
+	}
+	return os.Rename(tmp, dst)
+}
+
+func (f *File) applyEdits(edits map[string]string) error {
+	for id, text := range edits {
+		set, ok := f.setters[id]
+		if !ok {
+			return fmt.Errorf("раздел %q нельзя изменить", id)
+		}
+		set(text)
+	}
+	return nil
+}
+
+// Save применяет правки к контейнеру 1С 8 и возвращает новый файл.
 // Неизменённые элементы переносятся побайтно.
 func (f *File) Save(edits map[string]string) ([]byte, error) {
 	if f.v8 == nil {
-		return nil, errors.New("сохранение в этот формат не поддерживается — сохраните модуль в текстовый файл")
+		return nil, errors.New("это не контейнер 1С 8")
 	}
 	for id, text := range edits {
 		set, ok := f.setters[id]
