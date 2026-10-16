@@ -879,7 +879,8 @@ body.panning, body.panning * { cursor: grabbing !important; }
 body.dragging, body.dragging *, body.connecting, body.connecting * { user-select: none; }
 body.connecting * { cursor: crosshair !important; }
 
-.board-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.board-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.board-world.moving { will-change: transform; }
 .board-links { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; }
 
 .link { fill: none; stroke: rgba(235, 235, 245, 0.42); stroke-width: 1.6; }
@@ -919,8 +920,8 @@ body.connecting * { cursor: crosshair !important; }
 body.dragging .card.selected { cursor: grabbing; box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.25), 0 22px 44px rgba(0, 0, 0, 0.5); }
 
 .card-title, .card-text { outline: none; overflow-wrap: anywhere; white-space: pre-wrap; }
-.card-title { font: 600 14px/1.35 var(--font-display); }
-.card-text { margin-top: 4px; color: var(--text-2); font-size: 12.5px; line-height: 1.45; }
+.card-title { font: 600 var(--title-size, 14px)/1.3 var(--font-display); color: var(--title-color, var(--text)); }
+.card-text { margin-top: 4px; color: var(--body-color, var(--text-2)); font-size: var(--text-size, 12px); line-height: 1.45; }
 .card-title[contenteditable], .card-text[contenteditable] { cursor: text; user-select: text; }
 .card-title:empty::before, .card-text:empty::before { content: attr(data-placeholder); color: var(--text-3); }
 .card-text:empty:not([contenteditable])::before { content: none; }
@@ -1134,10 +1135,6 @@ body.selecting, body.selecting * { user-select: none; }
 
 .card-filled { background: color-mix(in srgb, var(--card-color) 22%, #2c2c30); border-color: color-mix(in srgb, var(--card-color) 45%, transparent); }
 .card-filled::before { display: none; }
-.card-size-s .card-title { font-size: 12.5px; }
-.card-size-s .card-text { font-size: 11.5px; }
-.card-size-l .card-title { font-size: 19px; }
-.card-size-l .card-text { font-size: 15px; line-height: 1.5; }
 
 .card-noteref { padding-left: 46px; }
 .card-noteref .card-text { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
@@ -1207,3 +1204,54 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 .picker-item:hover { background: rgba(255, 255, 255, 0.08); }
 .picker-item svg { width: 15px; height: 15px; color: #ffd60a; flex: none; }
 .picker-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* === Холст: окошко «Текст» ============================================== */
+
+.bar-textbtn { display: flex; align-items: baseline; gap: 3px; width: auto !important; padding: 0 8px; }
+.bar-aa { font: 600 14px/1 var(--font-display); }
+.bar-size-num { color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.bar-pop {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 344px;
+  padding: 12px;
+  transform: translateX(-50%);
+  border: 1px solid var(--hair-strong);
+  border-radius: 12px;
+  background: rgba(44, 44, 48, 0.98);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  white-space: normal;
+  cursor: default;
+}
+.board-bar.pop-above .bar-pop { top: auto; bottom: calc(100% + 8px); }
+.pop-row { display: flex; align-items: center; gap: 6px; }
+.pop-label { width: 58px; color: var(--text-2); font-size: 12px; }
+.pop-value { min-width: 34px; text-align: center; font-variant-numeric: tabular-nums; }
+.pop-row .tool-btn { width: 28px; height: 28px; }
+.pop-colors { flex-wrap: wrap; gap: 7px; }
+.pop-colors .swatch { width: 20px; height: 20px; }
+.swatch-auto { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35); }
+
+.pop-slider {
+  --fill: 10%;
+  width: 100%;
+  height: 4px;
+  margin: 2px 0;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) var(--fill), rgba(255, 255, 255, 0.14) var(--fill));
+  appearance: none;
+  cursor: pointer;
+}
+.pop-slider::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f2f2f4;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  appearance: none;
+}

@@ -13,7 +13,9 @@ export interface Card {
   text: string
   color: string
   fill?: boolean // залить карточку цветом, а не только полосой сверху
-  size?: TextSize
+  size?: TextSize // старый формат размера (до 2.3) — читается через fontSizeOf
+  fontSize?: number // размер заголовка в пикселях; текст — чуть мельче
+  textColor?: string // '' — обычный цвет
   path?: string // карточка-файл
   ext?: string
   noteId?: string // карточка-заметка
@@ -40,6 +42,28 @@ export const MIN_CARD_WIDTH = 140
 export const MAX_CARD_WIDTH = 720
 export const MIN_CARD_HEIGHT = 64
 const HISTORY_LIMIT = 100
+
+export const MIN_FONT = 10
+export const MAX_FONT = 72
+/** Ступени для кнопок «−» и «+» и Ctrl+Shift+</>. */
+export const FONT_STEPS = [10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 56, 64, 72]
+const LEGACY_FONT: Record<TextSize, number> = { s: 12, m: 14, l: 19 }
+
+/** Размер заголовка карточки с учётом старого формата (s/m/l). */
+export function fontSizeOf(card: Card): number {
+  return card.fontSize ?? LEGACY_FONT[card.size ?? 'm']
+}
+
+/** Размер основного текста — чуть мельче заголовка. */
+export function bodySizeOf(card: Card): number {
+  return Math.max(MIN_FONT, Math.round(fontSizeOf(card) * 0.86 * 2) / 2)
+}
+
+/** Следующая ступень размера вверх (dir = 1) или вниз (dir = -1). */
+export function stepFont(size: number, dir: 1 | -1): number {
+  if (dir > 0) return FONT_STEPS.find((s) => s > size) ?? MAX_FONT
+  return [...FONT_STEPS].reverse().find((s) => s < size) ?? MIN_FONT
+}
 
 export const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 
@@ -125,6 +149,18 @@ export class BoardModel {
   update(id: string, patch: Partial<Card>): void {
     const card = this.cards.get(id)
     if (card) Object.assign(card, patch)
+  }
+
+  /** Размер текста в пикселях, в пределах MIN_FONT…MAX_FONT. */
+  setFontSize(ids: Iterable<string>, size: number): void {
+    const value = Math.round(Math.min(MAX_FONT, Math.max(MIN_FONT, size)))
+    for (const id of ids) {
+      const card = this.cards.get(id)
+      if (card) {
+        card.fontSize = value
+        delete card.size
+      }
+    }
   }
 
   moveBy(ids: Iterable<string>, dx: number, dy: number): void {
