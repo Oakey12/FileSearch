@@ -412,6 +412,8 @@ svg { flex: none; }
   margin: 0 8px;
 }
 
+/* Колонки шире области не вылезают под панель предпросмотра (под фоном она прозрачная). */
+.list-head { overflow: hidden; }
 .list-head {
   display: grid;
   grid-template-columns: var(--cols);
@@ -1771,3 +1773,163 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 :root[data-theme="light"] .card[style*="--title-color"] .card-text { color: color-mix(in oklab, var(--title-color) 50%, #3a3a3c); }
 :root[data-theme="light"] .card-filled { border-color: color-mix(in srgb, var(--card-color) 55%, transparent); }
 :root[data-theme="light"] .board-banner { background: rgba(0, 113, 227, 0.95); }
+
+/* === Фон окна «Частицы» ================================================ */
+/* Слой под интерфейсом: небо из градиентов (без картинки из сети) и круги.
+   Двигаются только transform и opacity; один @keyframes на все круги —
+   координаты в CSS-переменных у каждого круга. */
+
+.backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: -1; /* под содержимым, но над фоном окна */
+  overflow: hidden;
+  pointer-events: none;
+  --bd-glow: hsl(180 100% 80%);
+}
+:root[data-backdrop="particles"] .backdrop { display: block; }
+
+.bd-sky {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(1px 1px at 12% 18%, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(1px 1px at 68% 34%, rgba(255, 255, 255, 0.4), transparent),
+    radial-gradient(1.5px 1.5px at 38% 72%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(1px 1px at 86% 82%, rgba(255, 255, 255, 0.45), transparent);
+  background-size: 340px 340px;
+}
+.bd-sky::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(70% 60% at 78% 10%, rgba(64, 120, 200, 0.38), transparent 62%),
+    radial-gradient(60% 55% at 10% 92%, rgba(20, 84, 150, 0.46), transparent 66%),
+    radial-gradient(45% 40% at 46% 52%, rgba(96, 64, 170, 0.16), transparent 72%);
+}
+
+.bd-particles { position: absolute; inset: 0; }
+.bd-particle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translate3d(var(--x0), var(--y0), 0);
+  animation: bd-rise linear infinite;
+  will-change: transform;
+}
+.bd-dot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(var(--bd-glow), var(--bd-glow) 10%, transparent 56%);
+  animation: bd-pulse ease-in-out infinite;
+}
+.bd-paused .bd-particle, .bd-paused .bd-dot { animation-play-state: paused; }
+
+@keyframes bd-rise {
+  from { transform: translate3d(var(--x0), var(--y0), 0); }
+  to { transform: translate3d(var(--x1), var(--y1), 0); }
+}
+@keyframes bd-pulse {
+  0%, 100% { transform: scale(0.4); opacity: 0.95; }
+  50% { transform: scale(2.4); opacity: 0.6; }
+}
+
+/* Интерфейс поверх неба — чуть прозрачный. Бумага с текстом и кодом остаётся
+   непрозрачной: читаемость важнее. */
+:root[data-backdrop="particles"] {
+  background: #021027;
+  --sidebar: rgba(10, 16, 32, 0.66);
+  --raised: rgba(46, 52, 68, 0.78);
+  --raised-hover: rgba(58, 64, 82, 0.86);
+  --hair: rgba(255, 255, 255, 0.08);
+  --main-tint: rgba(8, 14, 30, 0.42);
+}
+:root[data-backdrop="particles"] body { background: transparent; }
+:root[data-backdrop="particles"] .main { background: var(--main-tint); }
+
+:root[data-theme="light"][data-backdrop="particles"] {
+  background: #dfe8f6;
+  --sidebar: rgba(247, 249, 253, 0.7);
+  --raised: rgba(255, 255, 255, 0.78);
+  --raised-hover: rgba(255, 255, 255, 0.92);
+  --hair: rgba(20, 40, 80, 0.1);
+  --main-tint: rgba(251, 252, 255, 0.55);
+}
+:root[data-theme="light"] .backdrop { --bd-glow: hsl(212 85% 62% / 0.55); }
+:root[data-theme="light"] .bd-sky { background: none; }
+:root[data-theme="light"] .bd-sky::before {
+  background:
+    radial-gradient(70% 60% at 78% 8%, rgba(255, 255, 255, 0.9), transparent 62%),
+    radial-gradient(60% 55% at 10% 92%, rgba(150, 190, 245, 0.55), transparent 66%),
+    radial-gradient(45% 40% at 46% 52%, rgba(190, 170, 240, 0.25), transparent 72%);
+}
+
+/* --- Кнопка и выбор фона ------------------------------------------------ */
+
+.update-row { position: relative; }
+.bd-btn { margin-left: auto; }
+.bd-btn + .theme-btn { margin-left: 0; }
+.bd-btn[aria-expanded="true"] { background: var(--raised-hover); color: var(--text); }
+
+.bd-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  padding: 10px;
+  border: 1px solid var(--hair-strong);
+  border-radius: 12px;
+  background: var(--popover-bg);
+  box-shadow: var(--shadow-pop);
+  backdrop-filter: blur(18px); /* небольшая площадь — размытие дешёвое */
+}
+.bd-menu[hidden] { display: none; }
+.bd-menu-title { margin: 0 2px 8px; color: var(--text-2); font-size: 12px; font-weight: 600; }
+.bd-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.bd-option {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: 12px;
+  text-align: center;
+}
+.bd-option:hover, .bd-option[aria-checked="true"] { color: var(--text); }
+.bd-option:focus-visible { outline: none; }
+.bd-option:focus-visible .bd-swatch { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bd-swatch {
+  position: relative;
+  display: block;
+  height: 54px;
+  border: 1px solid var(--hair-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.bd-option[aria-checked="true"] .bd-swatch { border-color: transparent; box-shadow: 0 0 0 2px var(--accent); }
+.bd-swatch-none { background: linear-gradient(135deg, var(--bg) 0 50%, var(--raised) 50%); }
+.bd-swatch-particles {
+  background:
+    radial-gradient(80% 70% at 80% 10%, rgba(64, 120, 200, 0.5), transparent 65%),
+    radial-gradient(70% 70% at 10% 95%, rgba(20, 84, 150, 0.6), transparent 70%),
+    #021027;
+}
+.bd-swatch-particles i {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: radial-gradient(hsl(180 100% 80%), hsl(180 100% 80%) 12%, transparent 60%);
+}
+.bd-swatch-particles i:nth-child(1) { left: 14%; top: 58%; transform: scale(1.6); }
+.bd-swatch-particles i:nth-child(2) { left: 42%; top: 22%; }
+.bd-swatch-particles i:nth-child(3) { left: 66%; top: 62%; transform: scale(2.2); }
+.bd-swatch-particles i:nth-child(4) { left: 82%; top: 18%; transform: scale(0.8); }
+.bd-swatch-particles i:nth-child(5) { left: 28%; top: 82%; transform: scale(0.9); }
