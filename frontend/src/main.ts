@@ -1,9 +1,12 @@
 import './style.css'
 import * as Go from '../wailsjs/go/main/App'
 import { EventsOn } from '../wailsjs/runtime/runtime'
+import { Drawer } from './drawer'
 import { baseName, collator, formatCount, kindOf, plural, seconds } from './format'
+import { parseTerms } from './highlight'
 import { Inspector, type PreviewResult } from './inspector'
 import { VirtualList, type FileItem } from './list'
+import { toast } from './toast'
 
 // --- События из Go ------------------------------------------------------
 
@@ -35,7 +38,7 @@ const stopButton = byId<HTMLButtonElement>('stop')
 const recentList = byId<HTMLUListElement>('recent')
 const inspectorEl = byId<HTMLElement>('inspector')
 const inspectorToggle = byId<HTMLButtonElement>('toggleInspector')
-const toastEl = byId<HTMLDivElement>('toast')
+const modeSwitch = document.querySelector<HTMLDivElement>('.mode-switch')!
 
 // --- Мелочи ------------------------------------------------------------
 
@@ -48,19 +51,12 @@ const store = {
   },
 }
 
-let toastTimer = 0
-function toast(message: string): void {
-  toastEl.textContent = message
-  toastEl.hidden = false
-  clearTimeout(toastTimer)
-  toastTimer = window.setTimeout(() => { toastEl.hidden = true }, 3500)
-}
-
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
 // --- Состояние поиска --------------------------------------------------
 
 let root = ''
+let textMode = store.get('mode') === 'text' // искать слова внутри документов
 let searchId = 0
 let running = false
 let lastDone: SearchDone | null = null
@@ -149,7 +145,18 @@ function startSearch(immediate = false): void {
     updateEmpty()
     return
   }
-  debounce = window.setTimeout(() => runSearch(query), immediate ? 0 : 180)
+  // Поиск по тексту тяжелее — ждём, пока человек допечатает слово.
+  debounce = window.setTimeout(() => runSearch(query), immediate ? 0 : textMode ? 350 : 180)
+}
+
+function setTextMode(on: boolean): void {
+  textMode = on
+  store.set('mode', on ? 'text' : 'name')
+  modeSwitch.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+    b.setAttribute('aria-checked', String((b.dataset.mode === 'text') === on))
+  })
+  queryInput.placeholder = on ? 'Слова из текста документа' : 'Имя файла или его часть'
+  startSearch(true)
 }
 
 function runSearch(query: string): void {
@@ -158,11 +165,14 @@ function runSearch(query: string): void {
   lastDone = null
   items = []
   list.root = root
+  const terms = parseTerms(query)
+  list.setTextMode(textMode, terms)
+  inspector.terms = textMode ? terms : []
   list.setItems(items)
   inspector.empty()
   updateStatus()
   updateEmpty()
-  Go.Search(searchId, root, query)
+  Go.Search(searchId, root, query, textMode)
 }
 
 EventsOn('search:batch', (batch: SearchBatch) => {
@@ -227,7 +237,9 @@ function updateEmpty(): void {
     text = lastDone.error
   } else if (!running && lastDone && items.length === 0) {
     title = 'Ничего не найдено'
-    text = 'Проверьте написание или выберите другую папку.'
+    text = textMode
+      ? 'Ни в одном документе нет всех этих слов. Сканы PDF без текстового слоя по содержимому не ищутся.'
+      : 'Проверьте написание, поищите по тексту документов или выберите другую папку.'
   }
 
   emptyEl.hidden = !title
@@ -286,11 +298,59 @@ listHead.addEventListener('click', (e) => {
 
 // --- Предпросмотр ------------------------------------------------------
 
+const drawer = new Drawer()
+
 const inspector = new Inspector(byId('inspectorBody'), {
   open: (path) => openFile(path),
   reveal: (path) => revealFile(path),
+  toBoard: (item) => void drawer.addToBoard(item),
 })
 inspector.empty()
+
+// --- Ширина предпросмотра: левую границу можно тянуть ------------------
+
+const INSPECTOR_WIDTH = 360
+const resizer = byId<HTMLDivElement>('inspectorResizer')
+
+function setInspectorWidth(px: number): void {
+  const max = Math.max(320, Math.min(1100, window.innerWidth - 228 - 380))
+  const width = Math.round(Math.min(max, Math.max(280, px)))
+  app.style.setProperty('--inspector-w', `${width}px`)
+  store.set('inspectorWidth', String(width))
+}
+
+setInspectorWidth(Number(store.get('inspectorWidth')) || INSPECTOR_WIDTH)
+
+resizer.addEventListener('pointerdown', (start) => {
+  if (start.button !== 0) return
+  start.preventDefault()
+  resizer.setPointerCapture(start.pointerId)
+  const startWidth = inspectorEl.getBoundingClientRect().width
+  document.body.classList.add('resizing') // PDF в iframe не должен перехватывать мышь
+  let frame = 0
+  const move = (e: PointerEvent) => {
+    cancelAnimationFrame(frame)
+    frame = requestAnimationFrame(() => setInspectorWidth(startWidth + (start.clientX - e.clientX)))
+  }
+  const up = () => {
+    resizer.removeEventListener('pointermove', move)
+    resizer.removeEventListener('pointerup', up)
+    resizer.removeEventListener('pointercancel', up)
+    document.body.classList.remove('resizing')
+  }
+  resizer.addEventListener('pointermove', move)
+  resizer.addEventListener('pointerup', up)
+  resizer.addEventListener('pointercancel', up)
+})
+resizer.addEventListener('dblclick', () => setInspectorWidth(INSPECTOR_WIDTH))
+resizer.addEventListener('keydown', (e) => {
+  const width = inspectorEl.getBoundingClientRect().width
+  if (e.key === 'ArrowLeft') setInspectorWidth(width + 24)
+  else if (e.key === 'ArrowRight') setInspectorWidth(width - 24)
+  else return
+  e.preventDefault()
+})
+window.addEventListener('resize', () => setInspectorWidth(inspectorEl.getBoundingClientRect().width || INSPECTOR_WIDTH))
 
 let previewTimer = 0
 let previewRequest = 0
@@ -408,6 +468,10 @@ queryInput.addEventListener('keydown', (e) => {
   }
 })
 scopeButton.addEventListener('click', pickFolder)
+modeSwitch.addEventListener('click', (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-mode]')
+  if (button) setTextMode(button.dataset.mode === 'text')
+})
 byId('pick').addEventListener('click', pickFolder)
 stopButton.addEventListener('click', () => Go.CancelSearch())
 inspectorToggle.addEventListener('click', () => setInspectorOpen(inspectorEl.hidden))
@@ -423,8 +487,25 @@ listEl.addEventListener('keydown', (e) => {
 })
 
 document.addEventListener('keydown', (e) => {
-  const typing = document.activeElement === queryInput
-  if ((e.ctrlKey && (e.key === 'f' || e.key === 'l')) || (e.key === '/' && !typing)) {
+  const active = document.activeElement as HTMLElement | null
+  const typing = !!active && (active.tagName === 'INPUT' || active.isContentEditable)
+  const key = e.key.toLowerCase()
+
+  if (e.ctrlKey && (key === 'j' || e.code === 'KeyJ')) {
+    e.preventDefault()
+    drawer.toggle()
+  } else if (drawer.isOpen) {
+    // Внутри шторки свои клавиши; Ctrl+F — поиск по заметкам.
+    if (e.ctrlKey && e.code === 'KeyF') {
+      e.preventDefault()
+      drawer.open('notes')
+      drawer.notes.focusSearch()
+    }
+  } else if (e.ctrlKey && e.shiftKey && e.code === 'KeyF') {
+    e.preventDefault()
+    setTextMode(!textMode)
+    queryInput.focus()
+  } else if ((e.ctrlKey && (e.code === 'KeyF' || e.code === 'KeyL')) || (e.key === '/' && !typing)) {
     e.preventDefault()
     queryInput.focus()
     queryInput.select()
@@ -450,6 +531,7 @@ async function patiently<T>(call: () => Promise<T>): Promise<T> {
 
 async function init(): Promise<void> {
   setInspectorOpen(store.get('inspector') !== '0')
+  setTextMode(textMode)
   setRoot(store.get('root') || '', false)
   updateStatus()
   queryInput.focus()

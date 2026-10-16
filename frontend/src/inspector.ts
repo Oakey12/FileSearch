@@ -2,12 +2,13 @@
 // Содержимое файлов вставляется только через textContent.
 
 import { formatLongDate, formatSize, kindOf } from './format'
+import { highlightInto, normalize } from './highlight'
 import type { FileItem } from './list'
 
 export interface PreviewSheet { name: string; rows: string[][]; truncated?: boolean }
 
 export interface PreviewResult {
-  kind: 'text' | 'image' | 'sheet' | 'info'
+  kind: 'text' | 'image' | 'sheet' | 'pdf' | 'info'
   path: string
   name: string
   ext: string
@@ -18,12 +19,13 @@ export interface PreviewResult {
   truncated?: boolean
   sheets?: PreviewSheet[]
   note?: string
-  image?: string
+  url?: string
 }
 
 export interface InspectorActions {
   open(path: string): void
   reveal(path: string): void
+  toBoard(item: FileItem): void
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -44,6 +46,9 @@ function fileIcon(ext: string, className: string): SVGSVGElement {
 }
 
 export class Inspector {
+  /** Слова для подсветки — заданы, когда идёт поиск по тексту. */
+  terms: string[] = []
+
   constructor(private body: HTMLElement, private actions: InspectorActions) {}
 
   empty(): void {
@@ -52,13 +57,13 @@ export class Inspector {
 
   /** Заголовок и действия показываются сразу, содержимое — когда загрузится. */
   loading(item: FileItem): void {
-    this.body.replaceChildren(this.header(item), el('div', 'qs-view qs-loading'), this.meta(item), this.buttons(item.path))
+    this.body.replaceChildren(this.header(item), el('div', 'qs-view qs-loading'), this.meta(item), this.buttons(item))
   }
 
   failed(item: FileItem, message: string): void {
     const view = el('div', 'qs-view qs-message')
     view.append(el('p', '', 'Не удалось открыть файл'), el('p', 'qs-dim', message))
-    this.body.replaceChildren(this.header(item), view, this.meta(item), this.buttons(item.path))
+    this.body.replaceChildren(this.header(item), view, this.meta(item), this.buttons(item))
   }
 
   show(item: FileItem, result: PreviewResult): void {
@@ -66,7 +71,7 @@ export class Inspector {
       this.header(item),
       this.view(result),
       this.meta(item, result),
-      this.buttons(item.path),
+      this.buttons(item),
     )
   }
 
@@ -85,14 +90,28 @@ export class Inspector {
         const img = el('img')
         img.alt = result.name
         img.decoding = 'async'
-        img.src = result.image ?? ''
+        img.src = result.url ?? ''
         view.appendChild(img)
         return view
       }
+      case 'pdf': {
+        // Встроенный просмотрщик PDF из WebView2 (Edge).
+        const view = el('div', 'qs-view qs-pdf')
+        const frame = el('iframe')
+        frame.title = result.name
+        frame.src = `${result.url ?? ''}#view=FitH`
+        view.appendChild(frame)
+        return view
+      }
       case 'text': {
-        const view = el('div', 'qs-view qs-paper')
-        const isDoc = result.ext === 'docx'
-        view.appendChild(el('pre', isDoc ? 'paper-text paper-doc' : 'paper-text', result.text ?? ''))
+        const view = el('div', 'qs-view qs-text')
+        const paper = el('div', 'qs-paper paper-scroll')
+        const isDoc = result.ext === 'docx' || result.ext === 'pptx'
+        const pre = el('pre', isDoc ? 'paper-text paper-doc' : 'paper-text')
+        paper.appendChild(pre)
+        view.appendChild(paper)
+        const marks = highlightInto(pre, result.text ?? '', this.terms)
+        if (marks.length) view.appendChild(this.findBar(marks))
         return view
       }
       case 'sheet':
@@ -111,20 +130,36 @@ export class Inspector {
     tabs.setAttribute('role', 'tablist')
     const table = el('div', 'qs-paper sheet-scroll')
 
+    const terms = this.terms
+    const cellMatches = (cell: string) => {
+      if (!terms.length || !cell) return false
+      const norm = normalize(cell)
+      return terms.some((t) => norm.includes(t))
+    }
+
     const showSheet = (index: number) => {
       tabs.querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-selected', String(i === index)))
       const sheet = sheets[index]
       const t = el('table', 'sheet-table')
       const body = el('tbody')
+      let first: HTMLElement | null = null
       for (const row of sheet.rows) {
         const tr = el('tr')
-        for (const cell of row) tr.appendChild(el('td', '', cell))
+        for (const cell of row) {
+          const td = el('td', cellMatches(cell) ? 'hit' : '', cell)
+          if (!first && td.className) first = td
+          tr.appendChild(td)
+        }
         body.appendChild(tr)
       }
       t.appendChild(body)
       table.replaceChildren(t)
       if (sheet.rows.length === 0) table.replaceChildren(el('p', 'paper-empty', 'Лист пуст'))
+      first?.scrollIntoView({ block: 'center', inline: 'center' })
     }
+
+    // Если идёт поиск по тексту, открываем первый лист, где есть совпадение.
+    const firstHit = Math.max(0, sheets.findIndex((s) => s.rows.some((r) => r.some(cellMatches))))
 
     sheets.forEach((sheet, i) => {
       const b = el('button', 'segment', sheet.name)
@@ -135,8 +170,36 @@ export class Inspector {
     })
     if (sheets.length > 1) view.appendChild(tabs)
     view.appendChild(table)
-    if (sheets.length) showSheet(0)
+    if (sheets.length) requestAnimationFrame(() => showSheet(firstHit))
     return view
+  }
+
+  /** Панель «3 из 12 ˄ ˅» для перехода между найденными словами в тексте. */
+  private findBar(marks: HTMLElement[]): HTMLElement {
+    const bar = el('div', 'find-bar')
+    const label = el('span', 'find-count')
+    const prev = el('button', 'find-btn')
+    const next = el('button', 'find-btn')
+    prev.type = next.type = 'button'
+    prev.title = 'Предыдущее совпадение'
+    next.title = 'Следующее совпадение'
+    prev.innerHTML = '<svg><use href="#i-up"/></svg>'
+    next.innerHTML = '<svg><use href="#i-chevron"/></svg>'
+    bar.append(label, prev, next)
+
+    let current = -1
+    const go = (i: number) => {
+      marks[current]?.classList.remove('current')
+      current = (i + marks.length) % marks.length
+      const mark = marks[current]
+      mark.classList.add('current')
+      mark.scrollIntoView({ block: 'center', inline: 'nearest' })
+      label.textContent = `${current + 1} из ${marks.length}${marks.length >= 1000 ? '+' : ''}`
+    }
+    prev.addEventListener('click', () => go(current - 1))
+    next.addEventListener('click', () => go(current + 1))
+    requestAnimationFrame(() => go(0))
+    return bar
   }
 
   private meta(item: FileItem, result?: PreviewResult): HTMLElement {
@@ -152,14 +215,18 @@ export class Inspector {
     return list
   }
 
-  private buttons(path: string): HTMLElement {
+  private buttons(item: FileItem): HTMLElement {
     const row = el('div', 'qs-actions')
     const open = el('button', 'btn btn-primary', 'Открыть')
     const reveal = el('button', 'btn', 'Показать в Проводнике')
-    open.type = reveal.type = 'button'
-    open.addEventListener('click', () => this.actions.open(path))
-    reveal.addEventListener('click', () => this.actions.reveal(path))
-    row.append(open, reveal)
+    const board = el('button', 'btn btn-icon')
+    open.type = reveal.type = board.type = 'button'
+    board.title = 'Добавить на холст'
+    board.innerHTML = '<svg><use href="#i-board"/></svg>'
+    open.addEventListener('click', () => this.actions.open(item.path))
+    reveal.addEventListener('click', () => this.actions.reveal(item.path))
+    board.addEventListener('click', () => this.actions.toBoard(item))
+    row.append(open, reveal, board)
     return row
   }
 }

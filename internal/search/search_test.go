@@ -7,7 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
+
+	"file-search/internal/content"
 )
 
 func makeTree(t *testing.T, files ...string) string {
@@ -110,5 +113,61 @@ func TestRunValidatesInput(t *testing.T) {
 	}
 	if _, err := Run(context.Background(), filepath.Join(root, "a.txt"), "a", Options{}, func([]Match) {}); err == nil {
 		t.Fatal("файл вместо папки должен давать ошибку")
+	}
+}
+
+func TestRunMultipleWordsAndYo(t *testing.T) {
+	root := makeTree(t, "Отчёт за июль.txt", "отчет за август.txt", "июль.txt")
+	matches, _, err := collect(t, context.Background(), root, "июль отчет", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Name != "Отчёт за июль.txt" {
+		t.Fatalf("ожидался только «Отчёт за июль.txt», получено %+v", matches)
+	}
+}
+
+func TestRunContent(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, text string) {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a.txt", "Поставщик: ООО Билайн.\nСчёт на оплату № 1834, итого 12 500 руб.")
+	write("b.txt", "Счёт без поставщика")
+	write("счет-шаблон.txt", "пусто")
+	write("photo.jpg", "счет оплату") // не текстовый формат — содержимое не читается
+
+	// Имя файла не содержит слов — в обычном режиме ничего.
+	if matches, _, _ := collect(t, context.Background(), root, "счет оплату", Options{}); len(matches) != 0 {
+		t.Fatalf("поиск по имени не должен смотреть в содержимое: %+v", matches)
+	}
+
+	docs := content.NewCache(1 << 20)
+	matches, _, err := collect(t, context.Background(), root, `счет "на оплату"`, Options{Content: true, Docs: docs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Name != "a.txt" {
+		t.Fatalf("ожидался только a.txt, получено %+v", matches)
+	}
+	m := matches[0]
+	if m.Hits != 1 || !strings.Contains(m.Snippet, "Счёт на оплату") || strings.Contains(m.Snippet, "\n") {
+		t.Fatalf("фрагмент/число вхождений: %q, %d", m.Snippet, m.Hits)
+	}
+
+	// Слово только в имени файла тоже подходит в режиме содержимого.
+	matches, _, _ = collect(t, context.Background(), root, "шаблон", Options{Content: true, Docs: docs})
+	if len(matches) != 1 || matches[0].Name != "счет-шаблон.txt" {
+		t.Fatalf("ожидалось совпадение по имени, получено %+v", matches)
+	}
+}
+
+func TestParseQuery(t *testing.T) {
+	got := ParseQuery(`  Отчёт   "За Июль"  2026 `).Terms
+	want := []string{"отчет", "за июль", "2026"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("ParseQuery = %q", got)
 	}
 }

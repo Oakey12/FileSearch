@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"file-search/internal/content"
 	"file-search/internal/preview"
 	"file-search/internal/search"
 	"file-search/internal/settings"
@@ -23,30 +25,35 @@ import (
 // updateCheckInterval — как часто в фоне проверять, не вышла ли новая версия.
 const updateCheckInterval = 15 * time.Minute
 
-// Префикс адресов картинок для предпросмотра. Файлы отдаются только по
-// одноразово выданному токену, а не по произвольному пути.
-const imagePrefix = "/preview-image/"
+// Префикс адресов картинок и PDF для предпросмотра. Файлы отдаются только
+// по выданному в Preview токену, а не по произвольному пути.
+const filePrefix = "/preview-file/"
+
+// docsCacheSize — сколько памяти держать под извлечённый текст документов.
+// Повторный поиск по содержимому той же папки идёт из памяти.
+const docsCacheSize = 256 << 20
 
 // App — методы, которые вызывает интерфейс.
 type App struct {
 	ctx    context.Context
 	recent *settings.Recent
+	docs   *content.Cache
 
 	searchMu     sync.Mutex
 	cancelSearch context.CancelFunc
 
-	imagesMu sync.Mutex
-	images   map[string]string // токен → путь
-	imageIDs []string          // порядок выдачи, чтобы держать не больше maxImages
+	filesMu sync.Mutex
+	files   map[string]string // токен → путь
+	fileIDs []string          // порядок выдачи, чтобы держать не больше maxFiles
 
 	updateMu sync.Mutex
 	release  *update.Release
 }
 
-const maxImages = 32
+const maxFiles = 32
 
 func NewApp() *App {
-	return &App{images: map[string]string{}}
+	return &App{files: map[string]string{}, docs: content.NewCache(docsCacheSize)}
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -103,7 +110,8 @@ type SearchDone struct {
 // Search запускает поиск и сразу возвращается. Результаты приходят событиями
 // "search:batch" и "search:done". Новый поиск отменяет предыдущий;
 // по id интерфейс отбрасывает опоздавшие пачки.
-func (a *App) Search(id int, root, query string) {
+// inContent — искать слова и в тексте документов (txt, docx, xlsx, pptx, pdf).
+func (a *App) Search(id int, root, query string, inContent bool) {
 	root = strings.Trim(strings.TrimSpace(root), `"`)
 	if root == "" {
 		runtime.EventsEmit(a.ctx, "search:done", SearchDone{ID: id, Error: "Выберите папку для поиска"})
@@ -124,7 +132,8 @@ func (a *App) Search(id int, root, query string) {
 	go func() {
 		defer cancel()
 		started := time.Now()
-		stats, err := search.Run(ctx, root, query, search.Options{}, func(items []search.Match) {
+		opts := search.Options{Content: inContent, Docs: a.docs}
+		stats, err := search.Run(ctx, root, query, opts, func(items []search.Match) {
 			runtime.EventsEmit(a.ctx, "search:batch", SearchBatch{ID: id, Items: items})
 		})
 
@@ -170,51 +179,66 @@ func (a *App) Preview(path string) (preview.Result, error) {
 	if err != nil {
 		return result, err
 	}
-	if result.Kind == preview.KindImage {
-		result.Image = imagePrefix + a.allowImage(path)
+	if preview.Servable(path) {
+		result.URL = filePrefix + a.allowFile(path) + "/" + url.PathEscape(result.Name)
 	}
 	return result, nil
 }
 
-func (a *App) allowImage(path string) string {
+func (a *App) allowFile(path string) string {
 	buf := make([]byte, 16)
 	_, _ = rand.Read(buf)
 	token := hex.EncodeToString(buf)
 
-	a.imagesMu.Lock()
-	defer a.imagesMu.Unlock()
-	a.images[token] = path
-	a.imageIDs = append(a.imageIDs, token)
-	if len(a.imageIDs) > maxImages {
-		delete(a.images, a.imageIDs[0])
-		a.imageIDs = a.imageIDs[1:]
+	a.filesMu.Lock()
+	defer a.filesMu.Unlock()
+	a.files[token] = path
+	a.fileIDs = append(a.fileIDs, token)
+	if len(a.fileIDs) > maxFiles {
+		delete(a.files, a.fileIDs[0])
+		a.fileIDs = a.fileIDs[1:]
 	}
 	return token
 }
 
-// imageMiddleware отдаёт картинки для предпросмотра по токену из Preview.
+// fileMiddleware отдаёт картинки и PDF для предпросмотра по токену из Preview.
+// Адрес: /preview-file/<токен>/<имя файла> — имя нужно только просмотрщику PDF.
 // Middleware, а не Handler: так запросы не перехватывает сервер разработки Vite.
-func (a *App) imageMiddleware(next http.Handler) http.Handler {
+func (a *App) fileMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, ok := strings.CutPrefix(r.URL.Path, imagePrefix)
+		rest, ok := strings.CutPrefix(r.URL.Path, filePrefix)
 		if !ok {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.Method != http.MethodGet {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.NotFound(w, r)
 			return
 		}
-		a.imagesMu.Lock()
-		path, ok := a.images[token]
-		a.imagesMu.Unlock()
-		if !ok || !preview.IsImage(path) {
+		token, _, _ := strings.Cut(rest, "/")
+		a.filesMu.Lock()
+		path, ok := a.files[token]
+		a.filesMu.Unlock()
+		if !ok || !preview.Servable(path) {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		http.ServeFile(w, r, path)
 	})
+}
+
+// --- Заметки -----------------------------------------------------------
+
+// LoadNotes возвращает сохранённые заметки ("notes") или холст ("board") —
+// JSON, который интерфейс сам формирует. Пустая строка — сохранений ещё нет.
+func (a *App) LoadNotes(kind string) (string, error) {
+	return settings.ReadDoc(kind)
+}
+
+// SaveNotes сохраняет заметки или холст в %APPDATA%\FileSearch.
+func (a *App) SaveNotes(kind, data string) error {
+	return settings.WriteDoc(kind, data)
 }
 
 // --- Обновления --------------------------------------------------------

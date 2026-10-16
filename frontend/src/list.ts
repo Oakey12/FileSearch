@@ -2,6 +2,7 @@
 // поэтому 100 000 результатов прокручиваются так же быстро, как 10.
 
 import { baseName, formatDate, formatSize, kindOf } from './format'
+import { highlightInto } from './highlight'
 
 export interface FileItem {
   path: string
@@ -10,6 +11,8 @@ export interface FileItem {
   ext: string
   size: number
   mod: number
+  snip?: string // фрагмент текста при поиске по содержимому
+  hits?: number
 }
 
 interface Handlers {
@@ -18,6 +21,7 @@ interface Handlers {
 }
 
 const ROW_HEIGHT = 28
+const ROW_HEIGHT_TEXT = 48 // строка с фрагментом текста
 const OVERSCAN = 6
 
 export class VirtualList {
@@ -25,6 +29,10 @@ export class VirtualList {
   selected = -1
   /** Папка поиска: в колонке «Папка» путь показывается относительно неё. */
   root = ''
+
+  private rowHeight = ROW_HEIGHT
+  private terms: string[] = []
+  private textMode = false
 
   private pool: HTMLElement[] = []
   private frame = 0
@@ -57,15 +65,27 @@ export class VirtualList {
   setItems(items: FileItem[], keepPath?: string): void {
     this.items = items
     this.selected = keepPath ? items.findIndex((it) => it.path === keepPath) : -1
-    this.spacer.style.height = `${items.length * ROW_HEIGHT}px`
+    this.spacer.style.height = `${items.length * this.rowHeight}px`
     if (!keepPath) this.scroller.scrollTop = 0
     this.renderNow()
   }
 
   /** Сообщает, что в конец items добавлены элементы. */
   appended(): void {
-    this.spacer.style.height = `${this.items.length * ROW_HEIGHT}px`
+    this.spacer.style.height = `${this.items.length * this.rowHeight}px`
     this.schedule()
+  }
+
+  /** Режим поиска по тексту: строки выше, под именем — фрагмент с подсветкой слов. */
+  setTextMode(on: boolean, terms: string[]): void {
+    this.textMode = on
+    this.terms = terms
+    this.rowHeight = on ? ROW_HEIGHT_TEXT : ROW_HEIGHT
+    this.scroller.classList.toggle('text-mode', on)
+    this.spacer.style.height = `${this.items.length * this.rowHeight}px`
+    for (const row of this.pool) row.dataset.index = '' // перерисовать все строки
+    this.ensurePool()
+    this.renderNow()
   }
 
   get current(): FileItem | undefined {
@@ -82,14 +102,14 @@ export class VirtualList {
   }
 
   private scrollIntoView(index: number): void {
-    const top = index * ROW_HEIGHT
-    const bottom = top + ROW_HEIGHT
+    const top = index * this.rowHeight
+    const bottom = top + this.rowHeight
     if (top < this.scroller.scrollTop) this.scroller.scrollTop = top
     else if (bottom > this.scroller.scrollTop + this.viewport) this.scroller.scrollTop = bottom - this.viewport
   }
 
   private onKey(e: KeyboardEvent): void {
-    const page = Math.max(1, Math.floor(this.viewport / ROW_HEIGHT) - 1)
+    const page = Math.max(1, Math.floor(this.viewport / this.rowHeight) - 1)
     const last = this.items.length - 1
     const from = this.selected < 0 ? -1 : this.selected
     let next: number | null = null
@@ -127,7 +147,7 @@ export class VirtualList {
   }
 
   private ensurePool(): void {
-    const needed = Math.ceil(this.viewport / ROW_HEIGHT) + OVERSCAN * 2
+    const needed = Math.ceil(this.viewport / this.rowHeight) + OVERSCAN * 2
     while (this.pool.length < needed) {
       const row = document.createElement('div')
       row.className = 'row'
@@ -135,7 +155,8 @@ export class VirtualList {
       row.innerHTML =
         '<span class="cell c-name"><svg class="ficon"><use href="#i-doc"/></svg><span class="name"></span></span>' +
         '<span class="cell c-mod"></span><span class="cell c-size"></span>' +
-        '<span class="cell c-kind"></span><span class="cell c-dir"></span>'
+        '<span class="cell c-kind"></span><span class="cell c-dir"></span>' +
+        '<span class="cell c-snip"></span>'
       row.hidden = true
       this.spacer.appendChild(row)
       this.pool.push(row)
@@ -149,7 +170,7 @@ export class VirtualList {
   private renderNow(): void {
     if (this.frame) cancelAnimationFrame(this.frame)
     this.frame = 0
-    const first = Math.max(0, Math.floor(this.scroller.scrollTop / ROW_HEIGHT) - OVERSCAN)
+    const first = Math.max(0, Math.floor(this.scroller.scrollTop / this.rowHeight) - OVERSCAN)
 
     for (let slot = 0; slot < this.pool.length; slot++) {
       const row = this.pool[slot]
@@ -168,7 +189,7 @@ export class VirtualList {
 
       row.dataset.index = String(index)
       row.dataset.path = item.path
-      row.style.transform = `translateY(${index * ROW_HEIGHT}px)`
+      row.style.transform = `translateY(${index * this.rowHeight}px)`
       row.classList.toggle('odd', index % 2 === 1)
       const kind = kindOf(item.ext)
       const cells = row.children
@@ -179,6 +200,9 @@ export class VirtualList {
       cells[2].textContent = formatSize(item.size)
       cells[3].textContent = kind.label
       cells[4].textContent = this.relativeDir(item.dir)
+      const snip = cells[5] as HTMLElement
+      if (this.textMode && item.snip) highlightInto(snip, item.snip, this.terms, 20)
+      else snip.textContent = ''
       row.title = item.path
     }
 
