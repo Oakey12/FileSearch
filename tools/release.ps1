@@ -1,7 +1,10 @@
 ﻿param(
     [Parameter(Mandatory)] [string]$Version,
     [string]$Notes = "",
-    [string]$PublishDir = "C:\Users\1108\nginx-1.28.3\html-filesearch\file-search"
+    [string]$PublishDir = "C:\Users\1108\nginx-1.28.3\html-filesearch\file-search",
+    # Пересобрать интерфейс через npm. Нужен доступ к registry.npmjs.org.
+    # Без ключа берётся готовый frontend/dist из репозитория — так собирает сервер без интернета.
+    [switch]$BuildFrontend
 )
 $ErrorActionPreference = "Stop"
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Версия должна быть вида 1.2.3" }
@@ -13,15 +16,22 @@ $wails   = (Get-Command wails -ErrorAction SilentlyContinue).Source
 if (-not $wails) { $wails = Join-Path (go env GOPATH) "bin\wails.exe" }
 if (-not (Test-Path $wails)) { throw "Не найден wails. Установите: go install github.com/wailsapp/wails/v2/cmd/wails@latest" }
 
+$buildArgs = @("build", "-clean", "-trimpath", "-webview2", "embed", "-o", $exeName,
+    "-ldflags", "-s -w -X file-search/internal/update.CurrentVersion=$Version")
+if (-not $BuildFrontend) {
+    if (-not (Test-Path (Join-Path $root "frontend\dist\index.html"))) {
+        throw "Нет готового интерфейса frontend\dist. Выполните git pull или запустите с -BuildFrontend"
+    }
+    $buildArgs += "-s" # не запускать npm, взять готовый frontend/dist
+}
+
 Push-Location $root
 try {
-    # Только internal: корневой пакет встраивает frontend/dist, которую создаёт wails build.
-    go test ./internal/...
+    go test ./...
     if ($LASTEXITCODE) { throw "Тесты не прошли" }
-    # wails build собирает фронтенд и встраивает его в exe.
+    # wails build встраивает интерфейс из frontend/dist в exe.
     # -webview2 embed: если на ПК нет WebView2, программа предложит его установить.
-    & $wails build -clean -trimpath -webview2 embed -o $exeName `
-        -ldflags "-s -w -X file-search/internal/update.CurrentVersion=$Version"
+    & $wails @buildArgs
     if ($LASTEXITCODE) { throw "Сборка не удалась" }
 } finally { Pop-Location }
 

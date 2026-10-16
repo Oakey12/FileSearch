@@ -4,5 +4,4 @@
 release/
 build/bin/
 frontend/node_modules/
-frontend/dist/
 frontend/package.json.md5
