@@ -33,7 +33,7 @@ func main() {
 		BackgroundColour: windowBackground,
 		AssetServer: &assetserver.Options{
 			Assets:     assets,
-			Middleware: app.imageMiddleware,
+			Middleware: app.fileMiddleware,
 		},
 		OnStartup: app.startup,
 		Bind:      []any{app},

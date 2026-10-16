@@ -51,7 +51,7 @@ export namespace preview {
 	    truncated?: boolean;
 	    sheets?: Sheet[];
 	    note?: string;
-	    image?: string;
+	    url?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Result(source);
@@ -70,7 +70,7 @@ export namespace preview {
 	        this.truncated = source["truncated"];
 	        this.sheets = this.convertValues(source["sheets"], Sheet);
 	        this.note = source["note"];
-	        this.image = source["image"];
+	        this.url = source["url"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

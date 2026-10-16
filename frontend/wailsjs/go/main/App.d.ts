@@ -11,6 +11,8 @@ export function ForgetFolder(arg1:string):Promise<Array<string>>;
 
 export function InstallUpdate():Promise<void>;
 
+export function LoadNotes(arg1:string):Promise<string>;
+
 export function OpenFile(arg1:string):Promise<void>;
 
 export function PickFolder(arg1:string):Promise<string>;
@@ -19,7 +21,9 @@ export function Preview(arg1:string):Promise<preview.Result>;
 
 export function RecentFolders():Promise<Array<string>>;
 
-export function Search(arg1:number,arg2:string,arg3:string):Promise<void>;
+export function SaveNotes(arg1:string,arg2:string):Promise<void>;
+
+export function Search(arg1:number,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
 export function ShowInExplorer(arg1:string):Promise<void>;
 

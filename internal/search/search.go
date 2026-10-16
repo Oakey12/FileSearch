@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"file-search/internal/content"
 )
 
 // Match — найденный файл. Поля сокращены: при больших выдачах они уходят
@@ -25,7 +27,9 @@ type Match struct {
 	Dir      string `json:"dir"`
 	Ext      string `json:"ext"`
 	Size     int64  `json:"size"`
-	Modified int64  `json:"mod"` // Unix-время в миллисекундах
+	Modified int64  `json:"mod"`            // Unix-время в миллисекундах
+	Snippet  string `json:"snip,omitempty"` // фрагмент текста с найденным словом
+	Hits     int    `json:"hits,omitempty"` // сколько раз слово встретилось в тексте
 }
 
 // Stats — итог поиска.
@@ -42,6 +46,11 @@ type Options struct {
 	MaxResults int           // после стольких совпадений поиск останавливается
 	FlushEvery time.Duration // как часто отдавать накопленные совпадения
 	FlushSize  int           // отдать пачку раньше, если накопилось столько совпадений
+
+	// Content включает поиск по содержимому документов: слова ищутся
+	// в тексте и в имени файла. Docs — кэш извлечённого текста (обязателен).
+	Content bool
+	Docs    *content.Cache
 }
 
 const (
@@ -65,15 +74,20 @@ func (o *Options) normalize() {
 	}
 }
 
-// Run ищет в root файлы, имя которых содержит query (без учёта регистра).
+// Run ищет в root файлы по запросу: все слова запроса должны встретиться
+// в имени файла (или, с Options.Content, в имени либо тексте документа).
+// Регистр и разница «е»/«ё» не учитываются.
 // Совпадения отдаются пачками в onBatch из одной горутины, по порядку.
 // При отмене ctx возвращает уже собранную статистику и context.Canceled.
 func Run(ctx context.Context, root, query string, opts Options, onBatch func([]Match)) (Stats, error) {
 	opts.normalize()
 
-	needle := strings.ToLower(strings.TrimSpace(query))
-	if needle == "" {
+	q := ParseQuery(query)
+	if q.Empty() {
 		return Stats{}, errors.New("введите имя файла или его часть")
+	}
+	if opts.Content && opts.Docs == nil {
+		opts.Docs = content.NewCache(64 << 20)
 	}
 	info, err := os.Stat(root)
 	if err != nil {
@@ -108,7 +122,7 @@ func Run(ctx context.Context, root, query string, opts Options, onBatch func([]M
 				if !ok {
 					return
 				}
-				subdirs, matches, readErr := scanDir(dir, needle)
+				subdirs, matches, readErr := scanDir(ctx, dir, q, opts)
 				dirs.Add(1)
 				if readErr != nil {
 					skipped.Add(1)
@@ -178,7 +192,7 @@ func Run(ctx context.Context, root, query string, opts Options, onBatch func([]M
 
 // scanDir читает один каталог. На Windows сведения о файле приходят вместе
 // со списком каталога, поэтому entry.Info() не делает лишних запросов к диску.
-func scanDir(dir, needle string) (subdirs []string, matches []Match, err error) {
+func scanDir(ctx context.Context, dir string, q Query, opts Options) (subdirs []string, matches []Match, err error) {
 	entries, err := os.ReadDir(dir)
 	for _, entry := range entries {
 		name := entry.Name()
@@ -186,20 +200,39 @@ func scanDir(dir, needle string) (subdirs []string, matches []Match, err error) 
 			subdirs = append(subdirs, filepath.Join(dir, name))
 			continue
 		}
-		if !strings.Contains(strings.ToLower(name), needle) {
+		var (
+			snippet string
+			hits    int
+		)
+		switch {
+		case q.matchName(name):
+			// имя подходит — текст читать не нужно
+		case !opts.Content || !content.Searchable(name) || ctx.Err() != nil:
 			continue
 		}
+
 		info, infoErr := entry.Info()
 		if infoErr != nil {
 			continue
 		}
+		path := filepath.Join(dir, name)
+		if opts.Content && content.Searchable(name) {
+			doc := opts.Docs.Get(path, info.Size(), info.ModTime().UnixNano())
+			ok, s, h := q.matchDoc(name, doc)
+			if !ok {
+				continue
+			}
+			snippet, hits = s, h
+		}
 		matches = append(matches, Match{
-			Path:     filepath.Join(dir, name),
+			Path:     path,
 			Name:     name,
 			Dir:      dir,
 			Ext:      strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), "."),
 			Size:     info.Size(),
 			Modified: info.ModTime().UnixMilli(),
+			Snippet:  snippet,
+			Hits:     hits,
 		})
 	}
 	return subdirs, matches, err

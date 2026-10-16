@@ -18,6 +18,10 @@ export function InstallUpdate() {
   return window['go']['main']['App']['InstallUpdate']();
 }
 
+export function LoadNotes(arg1) {
+  return window['go']['main']['App']['LoadNotes'](arg1);
+}
+
 export function OpenFile(arg1) {
   return window['go']['main']['App']['OpenFile'](arg1);
 }
@@ -34,8 +38,12 @@ export function RecentFolders() {
   return window['go']['main']['App']['RecentFolders']();
 }
 
-export function Search(arg1, arg2, arg3) {
-  return window['go']['main']['App']['Search'](arg1, arg2, arg3);
+export function SaveNotes(arg1, arg2) {
+  return window['go']['main']['App']['SaveNotes'](arg1, arg2);
+}
+
+export function Search(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['Search'](arg1, arg2, arg3, arg4);
 }
 
 export function ShowInExplorer(arg1) {

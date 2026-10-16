@@ -3,20 +3,15 @@
 package preview
 
 import (
-	"archive/zip"
-	"bytes"
-	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
+
+	"file-search/internal/content"
 
 	"github.com/xuri/excelize/v2"
-	"golang.org/x/text/encoding/charmap"
-	"golang.org/x/text/encoding/unicode"
 )
 
 const (
@@ -32,6 +27,7 @@ const (
 	KindText  = "text"
 	KindImage = "image"
 	KindSheet = "sheet"
+	KindPDF   = "pdf"
 	KindInfo  = "info"
 )
 
@@ -48,7 +44,7 @@ type Result struct {
 	Truncated bool    `json:"truncated,omitempty"`
 	Sheets    []Sheet `json:"sheets,omitempty"`
 	Note      string  `json:"note,omitempty"`
-	Image     string  `json:"image,omitempty"` // адрес картинки, заполняет приложение
+	URL       string  `json:"url,omitempty"` // адрес картинки или PDF, заполняет приложение
 }
 
 // Sheet — лист Excel, обрезанный до maxExcelRows × maxExcelCols.
@@ -58,21 +54,15 @@ type Sheet struct {
 	Truncated bool       `json:"truncated,omitempty"`
 }
 
-var textExtensions = map[string]bool{
-	".txt": true, ".log": true, ".md": true, ".json": true, ".xml": true, ".csv": true, ".tsv": true,
-	".go": true, ".js": true, ".ts": true, ".html": true, ".htm": true, ".css": true, ".sql": true,
-	".yaml": true, ".yml": true, ".ini": true, ".conf": true, ".cfg": true, ".toml": true,
-	".bat": true, ".cmd": true, ".ps1": true, ".py": true, ".cs": true, ".java": true,
-	".c": true, ".h": true, ".cpp": true, ".php": true, ".sh": true,
-}
-
 var imageExtensions = map[string]bool{
 	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".bmp": true, ".webp": true, ".ico": true,
 }
 
-// IsImage сообщает, показывается ли файл как картинка.
-func IsImage(path string) bool {
-	return imageExtensions[strings.ToLower(filepath.Ext(path))]
+// Servable сообщает, что файл показывается по адресу (картинка или PDF),
+// а не передаётся в интерфейс содержимым.
+func Servable(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return imageExtensions[ext] || ext == ".pdf"
 }
 
 // Load читает файл и возвращает данные для предпросмотра.
@@ -98,10 +88,14 @@ func Load(path string) (Result, error) {
 	switch {
 	case imageExtensions[ext]:
 		result.Kind = KindImage
-	case textExtensions[ext]:
+	case ext == ".pdf":
+		result.Kind = KindPDF
+	case content.IsText(path):
 		err = loadText(path, &result)
 	case ext == ".docx":
 		err = loadDOCX(path, &result)
+	case ext == ".pptx":
+		err = loadSlides(path, &result)
 	case ext == ".xlsx" || ext == ".xlsm" || ext == ".xltx" || ext == ".xltm":
 		err = loadSheets(path, &result)
 	case ext == ".doc" || ext == ".xls":
@@ -113,22 +107,10 @@ func Load(path string) (Result, error) {
 }
 
 func loadText(path string, result *Result) error {
-	file, err := os.Open(path)
+	text, encoding, ok, err := content.ReadText(path, MaxTextSize)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-
-	data, err := io.ReadAll(io.LimitReader(file, MaxTextSize+1))
-	if err != nil {
-		return err
-	}
-	if len(data) > MaxTextSize {
-		data = data[:MaxTextSize]
-		result.Truncated = true
-	}
-
-	text, encoding, ok := decodeText(data)
 	if !ok {
 		result.Note = "Файл похож на двоичный, текст не показывается."
 		return nil
@@ -136,52 +118,12 @@ func loadText(path string, result *Result) error {
 	result.Kind = KindText
 	result.Text = text
 	result.Encoding = encoding
+	result.Truncated = result.Size > MaxTextSize
 	return nil
 }
 
-// decodeText определяет кодировку: UTF-8 (с BOM и без), UTF-16 с BOM,
-// иначе Windows-1251 — типичная кодировка старых русских текстовых файлов.
-// ok = false, если данные похожи на двоичный файл.
-func decodeText(data []byte) (text, encoding string, ok bool) {
-	switch {
-	case bytes.HasPrefix(data, []byte{0xEF, 0xBB, 0xBF}):
-		return string(trimPartialRune(data[3:])), "UTF-8", true
-	case bytes.HasPrefix(data, []byte{0xFF, 0xFE}), bytes.HasPrefix(data, []byte{0xFE, 0xFF}):
-		decoded, err := unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder().Bytes(data[:len(data)&^1])
-		if err != nil {
-			return "", "", false
-		}
-		return string(decoded), "UTF-16", true
-	}
-
-	head := data[:min(len(data), 8192)]
-	if bytes.IndexByte(head, 0) >= 0 {
-		return "", "", false
-	}
-	if trimmed := trimPartialRune(data); utf8.Valid(trimmed) {
-		return string(trimmed), "UTF-8", true
-	}
-	decoded, err := charmap.Windows1251.NewDecoder().Bytes(data)
-	if err != nil {
-		return "", "", false
-	}
-	return string(decoded), "Windows-1251", true
-}
-
-// trimPartialRune отрезает недописанный символ UTF-8 в конце, который
-// появляется, когда чтение обрезано по MaxTextSize.
-func trimPartialRune(data []byte) []byte {
-	for cut := 0; cut < utf8.UTFMax && cut < len(data); cut++ {
-		r, size := utf8.DecodeLastRune(data[:len(data)-cut])
-		if r != utf8.RuneError || size > 1 {
-			return data[:len(data)-cut]
-		}
-	}
-	return data
-}
-
 func loadDOCX(path string, result *Result) error {
-	text, truncated, err := extractDOCXText(path, MaxTextSize)
+	text, truncated, err := content.DOCXText(path, MaxTextSize)
 	if err != nil {
 		return err
 	}
@@ -192,6 +134,20 @@ func loadDOCX(path string, result *Result) error {
 	result.Kind = KindText
 	result.Text = text
 	result.Truncated = truncated
+	return nil
+}
+
+func loadSlides(path string, result *Result) error {
+	text, err := content.Extract(path, MaxTextSize)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(text) == "" {
+		result.Note = "В презентации нет текста для предпросмотра."
+		return nil
+	}
+	result.Kind = KindText
+	result.Text = text
 	return nil
 }
 
@@ -244,84 +200,4 @@ func readExcelSheet(book *excelize.File, sheet string) ([][]string, bool, error)
 		return nil, false, err
 	}
 	return rows, truncated, nil
-}
-
-func extractDOCXText(path string, limit int64) (string, bool, error) {
-	archive, err := zip.OpenReader(path)
-	if err != nil {
-		return "", false, err
-	}
-	defer archive.Close()
-
-	for _, file := range archive.File {
-		if file.Name != "word/document.xml" {
-			continue
-		}
-		reader, err := file.Open()
-		if err != nil {
-			return "", false, err
-		}
-		defer reader.Close()
-		return decodeDOCXDocument(reader, limit)
-	}
-	return "", false, errors.New("в DOCX не найден word/document.xml")
-}
-
-func decodeDOCXDocument(reader io.Reader, limit int64) (string, bool, error) {
-	decoder := xml.NewDecoder(reader)
-	var builder strings.Builder
-	truncated := false
-	appendText := func(value string) {
-		if truncated || value == "" {
-			return
-		}
-		remaining := int(limit) - builder.Len()
-		if remaining <= 0 {
-			truncated = true
-			return
-		}
-		if len(value) > remaining {
-			value = value[:remaining]
-			truncated = true
-		}
-		builder.WriteString(value)
-	}
-
-	for {
-		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return "", false, err
-		}
-		switch element := token.(type) {
-		case xml.StartElement:
-			switch element.Name.Local {
-			case "t":
-				var text string
-				if err := decoder.DecodeElement(&text, &element); err != nil {
-					return "", false, err
-				}
-				appendText(text)
-			case "tab":
-				appendText("\t")
-			case "br", "cr":
-				appendText("\n")
-			}
-		case xml.EndElement:
-			switch element.Name.Local {
-			case "p":
-				appendText("\n")
-			case "tc":
-				appendText("\t")
-			case "tr":
-				appendText("\n")
-			}
-		}
-		if truncated {
-			break
-		}
-	}
-	return strings.TrimSpace(builder.String()), truncated, nil
 }
