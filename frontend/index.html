@@ -131,14 +131,18 @@
 
     <section class="decoder" id="decoder" aria-label="Декодер 1С" hidden>
       <header class="decoder-head">
+        <button class="back-btn" id="decoderBack" type="button" title="Вернуться к списку файлов" hidden>
+          <svg><use href="#i-disclosure"/></svg><span>Все файлы</span>
+        </button>
         <div class="decoder-titles">
           <h1 class="decoder-title" id="decoderTitle">Декодер 1С</h1>
           <p class="decoder-meta" id="decoderMeta"></p>
         </div>
         <div class="decoder-actions">
           <button class="btn" id="decoderReveal" type="button" title="Показать файл в Проводнике"><svg><use href="#i-folder"/></svg></button>
-          <button class="btn" id="decoderSaveText" type="button" title="Сохранить текущий модуль в файл .bsl">Сохранить модуль…</button>
-          <button class="btn btn-primary" id="decoderSave" type="button" disabled>Сохранить как…</button>
+          <button class="btn" id="decoderSaveText" type="button" title="Сохранить текущий модуль в отдельный файл .bsl">Модуль в .bsl…</button>
+          <button class="btn" id="decoderSaveAs" type="button" disabled>Сохранить как…</button>
+          <button class="btn btn-primary" id="decoderSave" type="button" disabled>Сохранить</button>
         </div>
       </header>
 
@@ -147,6 +151,10 @@
         <p class="empty-title">Откройте обработку или отчёт 1С</p>
         <p class="empty-text">Файлы .epf и .erf (1С:Предприятие 8) и .ert (1С:Предприятие 7.7). Модули и формы покажутся кодом — без Конфигуратора. Файл можно просто перетащить в окно.</p>
         <button class="btn btn-primary" id="decoderOpenEmpty" type="button">Открыть файл 1С…</button>
+        <div class="decoder-recent" id="decoderRecent" hidden>
+          <p class="decoder-recent-title">Недавние</p>
+          <ul class="decoder-recent-list" id="decoderRecentList"></ul>
+        </div>
       </div>
 
       <div class="decoder-body" id="decoderBody" hidden>

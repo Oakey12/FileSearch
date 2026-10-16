@@ -54,6 +54,10 @@ export function SaveOneC(arg1, arg2) {
   return window['go']['main']['App']['SaveOneC'](arg1, arg2);
 }
 
+export function SaveOneCInPlace(arg1, arg2) {
+  return window['go']['main']['App']['SaveOneCInPlace'](arg1, arg2);
+}
+
 export function SaveOneCText(arg1, arg2) {
   return window['go']['main']['App']['SaveOneCText'](arg1, arg2);
 }

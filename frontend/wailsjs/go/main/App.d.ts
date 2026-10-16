@@ -30,6 +30,8 @@ export function SaveNotes(arg1:string,arg2:string):Promise<void>;
 
 export function SaveOneC(arg1:string,arg2:Record<string, string>):Promise<string>;
 
+export function SaveOneCInPlace(arg1:string,arg2:Record<string, string>):Promise<string>;
+
 export function SaveOneCText(arg1:string,arg2:string):Promise<string>;
 
 export function Search(arg1:number,arg2:string,arg3:string,arg4:boolean):Promise<void>;
