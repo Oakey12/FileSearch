@@ -748,7 +748,6 @@ body.drawer-open .drawer { transform: none; }
   font-size: 13px;
 }
 .drawer-modes .segment svg { width: 15px; height: 15px; }
-.drawer-close { position: absolute; right: 12px; top: 9px; }
 
 .drawer-pane { flex: 1; min-height: 0; }
 .drawer-pane[hidden] { display: none; }
@@ -844,7 +843,6 @@ body.drawer-open .drawer { transform: none; }
   flex: none;
   padding: 0 12px;
 }
-.note-toolbar .tool-btn { position: absolute; right: 12px; top: 5px; }
 .note-toolbar .tool-btn:disabled { opacity: 0.35; }
 .note-date { color: var(--text-3); font-size: 12px; }
 
@@ -966,7 +964,7 @@ body.dragging .card.selected { cursor: grabbing; box-shadow: 0 0 0 3px rgba(10, 
 }
 .board-hint[hidden] { display: none; }
 
-.board-zoom, .board-colors {
+.board-zoom {
   position: absolute;
   display: flex;
   align-items: center;
@@ -979,9 +977,7 @@ body.dragging .card.selected { cursor: grabbing; box-shadow: 0 0 0 3px rgba(10, 
   backdrop-filter: blur(10px);
 }
 .board-zoom { right: 14px; bottom: 14px; }
-.board-colors { left: 50%; top: 12px; transform: translateX(-50%); gap: 6px; padding: 5px 8px; }
-.board-colors[hidden] { display: none; }
-.board-zoom .tool-btn, .board-colors .tool-btn { width: 30px; height: 30px; }
+.board-zoom .tool-btn { width: 30px; height: 30px; }
 .board-zoom .tool-btn svg { width: 16px; height: 16px; }
 .board-zoom-value {
   min-width: 52px;
@@ -1009,3 +1005,205 @@ body.dragging .card.selected { cursor: grabbing; box-shadow: 0 0 0 3px rgba(10, 
 .swatch:hover { transform: scale(1.12); }
 
 .toast-action { margin-left: 0; font-weight: 600; }
+
+/* === Строка параметров поиска под полем (как в Finder) ================== */
+
+.scopebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  margin: -4px 16px 6px;
+  padding: 0 4px 0 14px; /* текст начинается под текстом поля поиска */
+}
+.scope-label { color: var(--text-3); font-size: 12px; }
+.scopebar .scope-tokens { background: none; padding: 0; gap: 6px; }
+.scopebar .scope-tokens button {
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--hair-strong);
+  border-radius: 13px;
+  background: none;
+  color: var(--text-2);
+  font-size: 12px;
+  box-shadow: none;
+}
+.scopebar .scope-tokens button:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.scopebar .scope-tokens button[aria-checked="true"] {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: #4da3ff;
+  box-shadow: none;
+}
+
+/* === Шторка: на всё окно и кнопки ======================================== */
+
+.drawer-actions { position: absolute; right: 12px; top: 9px; display: flex; gap: 2px; }
+.drawer-actions .tool-btn[aria-pressed="true"] { color: var(--text-2); }
+.drawer { transition: transform 0.42s cubic-bezier(0.32, 0.72, 0, 1), height 0.3s cubic-bezier(0.32, 0.72, 0, 1), left 0.3s, right 0.3s, border-radius 0.3s; }
+.drawer.maximized { left: 0; right: 0; height: 100vh; border-radius: 0; border-left: 0; border-right: 0; }
+.drawer.dragging { transition: none; }
+
+.note-actions { position: absolute; right: 12px; top: 6px; display: flex; align-items: center; gap: 4px; }
+.note-toolbar .note-actions .tool-btn { position: static; }
+.btn-small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.btn-small svg { width: 14px; height: 14px; }
+.btn-small:disabled { opacity: 0.4; }
+
+/* === Холст: контекстная панель =========================================== */
+
+.board-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  border: 1px solid var(--hair-strong);
+  border-radius: 12px;
+  background: rgba(44, 44, 48, 0.96);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(12px);
+  white-space: nowrap;
+  animation: bar-in 0.14s ease-out;
+}
+.board-bar[hidden] { display: none; }
+@keyframes bar-in { from { opacity: 0; } }
+.board-bar .tool-btn { width: 30px; height: 30px; }
+.board-bar .tool-btn svg { width: 16px; height: 16px; }
+.board-bar .tool-btn[aria-pressed="true"] { background: var(--accent-soft); color: #4da3ff; }
+.board-bar .tool-btn:disabled { opacity: 0.35; }
+.board-bar .swatch { width: 22px; height: 22px; }
+
+.bar-sizes { display: flex; gap: 1px; padding: 2px; border-radius: 8px; background: rgba(255, 255, 255, 0.06); }
+.bar-size {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-2);
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+.bar-size-s { font-size: 11px; }
+.bar-size-m { font-size: 13px; }
+.bar-size-l { font-size: 16px; }
+.bar-size[aria-checked="true"] { background: var(--raised-hover); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
+
+.board-banner {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  z-index: 11;
+  padding: 7px 14px;
+  transform: translateX(-50%);
+  border-radius: 10px;
+  background: rgba(10, 132, 255, 0.95);
+  color: #fff;
+  font-size: 12.5px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.board-banner[hidden] { display: none; }
+.board-viewport.connecting, .board-viewport.connecting .card { cursor: crosshair; }
+.card.connect-source { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.35), 0 12px 30px rgba(0, 0, 0, 0.4); }
+
+.board-marquee {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 9;
+  border: 1px solid rgba(10, 132, 255, 0.9);
+  border-radius: 4px;
+  background: rgba(10, 132, 255, 0.12);
+  pointer-events: none;
+}
+body.selecting, body.selecting * { user-select: none; }
+
+/* === Холст: карточки ====================================================== */
+
+.card-filled { background: color-mix(in srgb, var(--card-color) 22%, #2c2c30); border-color: color-mix(in srgb, var(--card-color) 45%, transparent); }
+.card-filled::before { display: none; }
+.card-size-s .card-title { font-size: 12.5px; }
+.card-size-s .card-text { font-size: 11.5px; }
+.card-size-l .card-title { font-size: 19px; }
+.card-size-l .card-text { font-size: 15px; line-height: 1.5; }
+
+.card-noteref { padding-left: 46px; }
+.card-noteref .card-text { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.card-note-icon { color: #ffd60a; }
+.card-title[contenteditable], .card-text[contenteditable] { max-height: 360px; overflow-y: auto; }
+
+/* Уголок изменения размера: видимый 10px, зона захвата 24px. */
+.card-resize {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 24px;
+  height: 24px;
+  cursor: nwse-resize;
+}
+.card-resize::after {
+  content: "";
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid rgba(235, 235, 245, 0.55);
+  border-bottom: 2px solid rgba(235, 235, 245, 0.55);
+  border-bottom-right-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.card.selected .card-resize::after, .card:hover .card-resize::after { opacity: 1; }
+body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-select: none; }
+
+.link-group.dashed .link { stroke-dasharray: 6 5; }
+
+/* === Холст: нижняя панель и выбор заметки ================================= */
+
+.board-tools .tool-btn:disabled { opacity: 0.35; }
+.board-picker {
+  position: absolute;
+  right: 14px;
+  bottom: 62px;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  max-height: 340px;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--hair-strong);
+  border-radius: 12px;
+  background: rgba(44, 44, 48, 0.98);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  scrollbar-width: thin;
+}
+.board-picker[hidden] { display: none; }
+.picker-head { margin: 4px 8px 6px; color: var(--text-3); font-size: 12px; }
+.picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  text-align: left;
+}
+.picker-item:hover { background: rgba(255, 255, 255, 0.08); }
+.picker-item svg { width: 15px; height: 15px; color: #ffd60a; flex: none; }
+.picker-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
