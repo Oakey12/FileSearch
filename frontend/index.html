@@ -30,17 +30,46 @@
     <symbol id="i-redo" viewBox="0 0 16 16"><path d="m10.5 3.5 2.75 2.75L10.5 9M13 6.25H6.5a3.5 3.5 0 0 0 0 7H9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-expand" viewBox="0 0 16 16"><path d="M9.5 2.75h3.75V6.5M6.5 13.25H2.75V9.5M13 3 9.25 6.75M3 13l3.75-3.75" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-collapse" viewBox="0 0 16 16"><path d="M13.25 6.5H9.5V2.75M2.75 9.5H6.5v3.75M9.5 6.5 13.25 2.75M6.5 9.5l-3.75 3.75" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-disclosure" viewBox="0 0 16 16"><path d="m6 4 4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-onec" viewBox="0 0 16 16"><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.5 5.5 4 8l1.5 2.5M10.5 5.5 12 8l-1.5 2.5M8.8 4.8 7.2 11.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.25" y="5.25" width="8.5" height="8.5" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 3.2V3.5A1.25 1.25 0 0 0 9.25 2.25h-5.5A1.5 1.5 0 0 0 2.25 3.75v5.5A1.25 1.25 0 0 0 3.5 10.5h.25" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
     <symbol id="i-minus" viewBox="0 0 16 16"><path d="M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
   </svg>
 
   <div class="app" id="app">
     <aside class="sidebar">
-      <nav class="places" aria-label="Папки">
-        <h2 class="side-title">Папки</h2>
-        <button class="side-item side-pick" id="pick" type="button">
-          <svg class="side-icon"><use href="#i-plus"/></svg><span>Выбрать папку…</span>
-        </button>
-        <ul class="recent" id="recent"></ul>
+      <nav class="places" aria-label="Разделы">
+        <section class="side-section" data-section="folders">
+          <h2 class="side-head-wrap">
+            <button class="side-head" type="button" aria-expanded="true" aria-controls="foldersBody">
+              <svg class="side-chevron"><use href="#i-disclosure"/></svg><span>История папок</span>
+            </button>
+          </h2>
+          <div class="side-body" id="foldersBody">
+            <div class="side-body-inner">
+              <button class="side-item side-pick" id="pick" type="button">
+                <svg class="side-icon"><use href="#i-plus"/></svg><span>Выбрать папку…</span>
+              </button>
+              <ul class="recent" id="recent"></ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="side-section" data-section="onec">
+          <h2 class="side-head-wrap">
+            <button class="side-head" type="button" aria-expanded="true" aria-controls="onecBody">
+              <svg class="side-chevron"><use href="#i-disclosure"/></svg><span>Декодер 1С</span>
+            </button>
+          </h2>
+          <div class="side-body" id="onecBody">
+            <div class="side-body-inner">
+              <button class="side-item side-pick" id="decoderOpen" type="button" title="Открыть внешнюю обработку или отчёт 1С (.epf, .erf, .ert)">
+                <svg class="side-icon"><use href="#i-plus"/></svg><span>Открыть файл 1С…</span>
+              </button>
+              <ul class="recent" id="onecRecent"></ul>
+            </div>
+          </div>
+        </section>
       </nav>
 
       <footer class="updates">
@@ -99,6 +128,53 @@
         <button class="link-btn" id="stop" type="button" hidden>Остановить</button>
       </footer>
     </main>
+
+    <section class="decoder" id="decoder" aria-label="Декодер 1С" hidden>
+      <header class="decoder-head">
+        <div class="decoder-titles">
+          <h1 class="decoder-title" id="decoderTitle">Декодер 1С</h1>
+          <p class="decoder-meta" id="decoderMeta"></p>
+        </div>
+        <div class="decoder-actions">
+          <button class="btn" id="decoderReveal" type="button" title="Показать файл в Проводнике"><svg><use href="#i-folder"/></svg></button>
+          <button class="btn" id="decoderSaveText" type="button" title="Сохранить текущий модуль в файл .bsl">Сохранить модуль…</button>
+          <button class="btn btn-primary" id="decoderSave" type="button" disabled>Сохранить как…</button>
+        </div>
+      </header>
+
+      <div class="decoder-empty" id="decoderEmpty">
+        <svg class="decoder-empty-icon"><use href="#i-onec"/></svg>
+        <p class="empty-title">Откройте обработку или отчёт 1С</p>
+        <p class="empty-text">Файлы .epf и .erf (1С:Предприятие 8) и .ert (1С:Предприятие 7.7). Модули и формы покажутся кодом — без Конфигуратора. Файл можно просто перетащить в окно.</p>
+        <button class="btn btn-primary" id="decoderOpenEmpty" type="button">Открыть файл 1С…</button>
+      </div>
+
+      <div class="decoder-body" id="decoderBody" hidden>
+        <nav class="decoder-nav" id="decoderNav" aria-label="Модули и формы"></nav>
+        <div class="decoder-main">
+          <div class="code-bar">
+            <span class="code-title" id="decoderSection"></span>
+            <span class="code-info" id="decoderSectionInfo"></span>
+            <label class="code-find">
+              <svg><use href="#i-search"/></svg>
+              <input id="codeFind" type="search" placeholder="Найти в модуле" spellcheck="false" aria-label="Найти в модуле">
+              <span class="code-find-count" id="codeFindCount"></span>
+              <button class="find-btn" id="codeFindPrev" type="button" title="Предыдущее (Shift+Enter)"><svg><use href="#i-up"/></svg></button>
+              <button class="find-btn" id="codeFindNext" type="button" title="Следующее (Enter)"><svg><use href="#i-chevron"/></svg></button>
+            </label>
+            <button class="tool-btn" id="decoderCopy" type="button" title="Копировать текст модуля"><svg><use href="#i-copy"/></svg></button>
+            <button class="btn btn-small" id="decoderRevert" type="button" hidden>Отменить правки</button>
+            <button class="btn btn-small" id="decoderEdit" type="button" aria-pressed="false">Изменить</button>
+          </div>
+          <p class="decoder-note" id="decoderNote" hidden></p>
+          <div class="code-scroll" id="codeScroll">
+            <pre class="code-gutter" id="codeGutter" aria-hidden="true"></pre>
+            <pre class="code-text" id="codeText" tabindex="0"></pre>
+            <textarea class="code-edit" id="codeEdit" spellcheck="false" hidden aria-label="Текст модуля"></textarea>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <section class="inspector" id="inspector" aria-label="Предпросмотр" hidden>
       <div class="inspector-resizer" id="inspectorResizer" role="separator" aria-orientation="vertical" aria-label="Ширина предпросмотра" title="Потяните, чтобы изменить ширину. Двойной щелчок — по умолчанию"></div>

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"file-search/internal/onec"
+
 	"github.com/ledongthuc/pdf"
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/unicode"
@@ -41,7 +43,7 @@ func IsText(path string) bool {
 // Searchable сообщает, умеет ли пакет доставать текст из файла.
 func Searchable(path string) bool {
 	switch ext := strings.ToLower(filepath.Ext(path)); ext {
-	case ".docx", ".xlsx", ".xlsm", ".pptx", ".pdf":
+	case ".docx", ".xlsx", ".xlsm", ".pptx", ".pdf", ".epf", ".erf", ".ert":
 		return true
 	default:
 		return textExtensions[ext]
@@ -67,6 +69,11 @@ func Extract(path string, limit int) (text string, err error) {
 		text, err = zipText(path, limit, isSlidePart, xmlElementText("t"))
 	case ".pdf":
 		text, err = pdfText(path, limit)
+	case ".epf", ".erf", ".ert":
+		// Внешние обработки и отчёты 1С — текст всех модулей.
+		if text, err = onec.ExtractText(path); err == nil && len(text) > limit {
+			text = string(trimPartialRune([]byte(text[:limit])))
+		}
 	default:
 		if !textExtensions[ext] {
 			return "", errors.New("формат не поддерживается")

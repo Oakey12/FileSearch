@@ -36,6 +36,8 @@ func main() {
 			Middleware: app.fileMiddleware,
 		},
 		OnStartup: app.startup,
+		// Файлы, перетащенные в окно, приходят в интерфейс (обработки 1С — в декодер).
+		DragAndDrop: &options.DragAndDrop{EnableFileDrop: true, DisableWebViewDrop: true},
 		Bind:      []any{app},
 		Windows: &windows.Options{
 			Theme: windows.Dark,

@@ -1,6 +1,7 @@
 import './style.css'
 import * as Go from '../wailsjs/go/main/App'
-import { EventsOn } from '../wailsjs/runtime/runtime'
+import { EventsOn, OnFileDrop } from '../wailsjs/runtime/runtime'
+import { Decoder, isOneCFile } from './decoder'
 import { Drawer } from './drawer'
 import { baseName, collator, formatCount, kindOf, plural, seconds } from './format'
 import { parseTerms } from './highlight'
@@ -71,9 +72,40 @@ const list = new VirtualList(listEl, byId('spacer'), {
   onOpen: (i) => openFile(items[i]?.path),
 })
 
+// --- Режимы: поиск файлов и декодер 1С ----------------------------------
+
+type Mode = 'search' | 'decoder'
+let mode: Mode = 'search'
+const decoderEl = byId<HTMLElement>('decoder')
+
+function setMode(next: Mode): void {
+  mode = next
+  app.classList.toggle('mode-decoder', next === 'decoder')
+  decoderEl.hidden = next !== 'decoder'
+  markActiveRecent()
+  renderOneCRecent()
+}
+
+// --- Разделы боковой панели (раскрываются, как в Finder) ----------------
+
+document.querySelectorAll<HTMLButtonElement>('.side-head').forEach((head) => {
+  const section = head.closest<HTMLElement>('.side-section')!.dataset.section!
+  const apply = (open: boolean) => {
+    head.setAttribute('aria-expanded', String(open))
+    head.closest('.side-section')!.classList.toggle('collapsed', !open)
+  }
+  apply(store.get(`side:${section}`) !== '0')
+  head.addEventListener('click', () => {
+    const open = head.getAttribute('aria-expanded') !== 'true'
+    apply(open)
+    store.set(`side:${section}`, open ? '1' : '0')
+  })
+})
+
 // --- Папка поиска ------------------------------------------------------
 
 function setRoot(dir: string, runNow = true): void {
+  if (mode !== 'search') setMode('search')
   root = dir
   scopeName.textContent = dir ? baseName(dir) : 'Выберите папку'
   scopeButton.title = dir || 'Папка для поиска'
@@ -122,9 +154,57 @@ function renderRecent(folders: string[]): void {
 
 function markActiveRecent(): void {
   recentList.querySelectorAll<HTMLButtonElement>('.side-item').forEach((b) => {
-    b.classList.toggle('active', !!root && b.dataset.dir?.toLowerCase() === root.toLowerCase())
+    b.classList.toggle('active', mode === 'search' && !!root && b.dataset.dir?.toLowerCase() === root.toLowerCase())
   })
 }
+
+// --- Декодер 1С ----------------------------------------------------------
+
+const decoder = new Decoder()
+const onecRecentList = byId<HTMLUListElement>('onecRecent')
+
+async function openOneC(path: string): Promise<void> {
+  setMode('decoder')
+  await decoder.open(path)
+  renderOneCRecent()
+}
+
+function renderOneCRecent(): void {
+  const current = decoder.currentPath.toLowerCase()
+  const nodes = decoder.recent().map((path) => {
+    const li = document.createElement('li')
+    const open = document.createElement('button')
+    open.type = 'button'
+    open.className = 'side-item'
+    open.title = path
+    open.classList.toggle('active', mode === 'decoder' && path.toLowerCase() === current)
+    open.innerHTML = '<svg class="side-icon side-icon-onec"><use href="#i-onec"/></svg><span class="side-label"></span>'
+    ;(open.lastElementChild as HTMLElement).textContent = baseName(path)
+    open.addEventListener('click', () => void openOneC(path))
+
+    const forget = document.createElement('button')
+    forget.type = 'button'
+    forget.className = 'side-forget'
+    forget.title = 'Убрать из списка'
+    forget.setAttribute('aria-label', `Убрать ${baseName(path)} из списка`)
+    forget.innerHTML = '<svg><use href="#i-close"/></svg>'
+    forget.addEventListener('click', () => decoder.forget(path))
+    li.append(open, forget)
+    return li
+  })
+  onecRecentList.replaceChildren(...nodes)
+}
+
+decoder.onRecentChange = renderOneCRecent
+byId('decoderOpen').addEventListener('click', () => setMode('decoder'))
+renderOneCRecent()
+
+// Перетащили файл в окно: обработку 1С — в декодер.
+OnFileDrop((_x, _y, paths) => {
+  const file = paths.find(isOneCFile)
+  if (file) void openOneC(file)
+  else toast('Перетащите файл обработки или отчёта 1С: .epf, .erf или .ert')
+}, false)
 
 // --- Поиск -------------------------------------------------------------
 
@@ -304,6 +384,7 @@ const inspector = new Inspector(byId('inspectorBody'), {
   open: (path) => openFile(path),
   reveal: (path) => revealFile(path),
   toBoard: (item) => void drawer.addToBoard(item),
+  openOneC: (path) => void openOneC(path),
 })
 inspector.empty()
 
@@ -505,6 +586,11 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault()
     setTextMode(!textMode)
     queryInput.focus()
+  } else if (mode === 'decoder') {
+    if (e.ctrlKey && e.code === 'KeyF') {
+      e.preventDefault()
+      byId<HTMLInputElement>('codeFind').focus()
+    }
   } else if ((e.ctrlKey && (e.code === 'KeyF' || e.code === 'KeyL')) || (e.key === '/' && !typing)) {
     e.preventDefault()
     queryInput.focus()

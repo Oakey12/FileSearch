@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"file-search/internal/content"
+	"file-search/internal/onec"
 
 	"github.com/xuri/excelize/v2"
 )
@@ -96,6 +97,8 @@ func Load(path string) (Result, error) {
 		err = loadDOCX(path, &result)
 	case ext == ".pptx":
 		err = loadSlides(path, &result)
+	case ext == ".epf" || ext == ".erf" || ext == ".ert":
+		err = loadOneC(path, &result)
 	case ext == ".xlsx" || ext == ".xlsm" || ext == ".xltx" || ext == ".xltm":
 		err = loadSheets(path, &result)
 	case ext == ".doc" || ext == ".xls":
@@ -148,6 +151,27 @@ func loadSlides(path string, result *Result) error {
 	}
 	result.Kind = KindText
 	result.Text = text
+	return nil
+}
+
+// loadOneC показывает модули внешней обработки или отчёта 1С текстом.
+func loadOneC(path string, result *Result) error {
+	text, err := onec.ExtractText(path)
+	if err != nil {
+		result.Note = "Не удалось прочитать файл 1С: " + err.Error()
+		return nil
+	}
+	if text == "" {
+		result.Note = "В файле 1С нет модулей с кодом."
+		return nil
+	}
+	if len(text) > MaxTextSize {
+		text = strings.ToValidUTF8(text[:MaxTextSize], "")
+		result.Truncated = true
+	}
+	result.Kind = KindText
+	result.Text = text
+	result.Encoding = "1С"
 	return nil
 }
 
