@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { describe, expect, it } from 'vitest'
-import { BACKDROP_KEY, PARTICLE_COUNT, applyBackdrop, currentBackdrop, loadBackdrop, makeParticles, mountParticles, saveBackdrop } from './backdrop'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { BACKDROP_KEY, PARTICLE_COUNT, applyBackdrop, currentBackdrop, loadBackdrop, makeParticles, mountParticles, saveBackdrop, watchSmoothness } from './backdrop'
 
 function memoryStore() {
   const data = new Map<string, string>()
@@ -97,5 +97,34 @@ describe('частицы', () => {
     document.dispatchEvent(new Event('visibilitychange'))
     expect(host.classList.contains('bd-paused')).toBe(false)
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+  })
+})
+
+describe('плавность', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  // Кадры с заданным шагом: requestAnimationFrame сразу зовёт следующий кадр.
+  function runFrames(stepMs: number, onSlow: () => void): void {
+    let t = 0
+    const queue: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => queue.push(cb))
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    watchSmoothness(onSlow)
+    while (queue.length) {
+      t += stepMs
+      queue.shift()!(t)
+    }
+  }
+
+  it('на быстром компьютере стекло остаётся с размытием', () => {
+    const slow = vi.fn()
+    runFrames(16, slow) // ~60 кадров в секунду
+    expect(slow).not.toHaveBeenCalled()
+  })
+
+  it('на медленном — размытие отключается', () => {
+    const slow = vi.fn()
+    runFrames(40, slow) // 25 кадров в секунду
+    expect(slow).toHaveBeenCalledOnce()
   })
 })

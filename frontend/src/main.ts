@@ -8,7 +8,7 @@ import { parseTerms } from './highlight'
 import { Inspector, type PreviewResult } from './inspector'
 import { VirtualList, type FileItem } from './list'
 import { WINDOW_BG, currentTheme, saveTheme, switchTheme, type Theme } from './theme'
-import { applyBackdrop, currentBackdrop, mountParticles, saveBackdrop, type Backdrop } from './backdrop'
+import { applyBackdrop, currentBackdrop, mountParticles, saveBackdrop, watchSmoothness, type Backdrop } from './backdrop'
 import { toast } from './toast'
 
 // --- События из Go ------------------------------------------------------
@@ -552,7 +552,7 @@ const themeButton = byId<HTMLButtonElement>('themeToggle')
 function syncWindowTheme(theme: Theme): void {
   try {
     // Под фоном «Частицы» край окна — цвета неба.
-    const [r, g, b] = currentBackdrop() === 'particles' ? (theme === 'light' ? [223, 232, 246] : [2, 16, 39]) : WINDOW_BG[theme]
+    const [r, g, b] = currentBackdrop() === 'particles' ? (theme === 'light' ? [228, 235, 247] : [4, 8, 23]) : WINDOW_BG[theme]
     WindowSetBackgroundColour(r, g, b, 255)
     if (theme === 'light') WindowSetLightTheme()
     else WindowSetDarkTheme()
@@ -583,11 +583,16 @@ const backdropMenu = byId<HTMLElement>('backdropMenu')
 const backdropOptions = [...backdropMenu.querySelectorAll<HTMLButtonElement>('.bd-option')]
 const particlesHost = byId<HTMLElement>('bdParticles')
 let unmountParticles: (() => void) | null = null
+let stopWatching: (() => void) | null = null
 
 function setBackdrop(value: Backdrop): void {
   applyBackdrop(value)
   unmountParticles?.()
+  stopWatching?.()
+  document.documentElement.classList.remove('bd-lite')
   unmountParticles = value === 'particles' ? mountParticles(particlesHost) : null
+  // На слабом компьютере стекло без размытия — чтобы ничего не тормозило.
+  stopWatching = value === 'particles' ? watchSmoothness(() => document.documentElement.classList.add('bd-lite')) : null
   for (const o of backdropOptions) {
     const on = o.dataset.backdrop === value
     o.setAttribute('aria-checked', String(on))

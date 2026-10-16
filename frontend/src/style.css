@@ -761,7 +761,7 @@ svg { flex: none; }
 
 @media (prefers-reduced-motion: reduce) {
   /* Кроме фона «Частицы»: его включают сами, и он должен двигаться. */
-  *:not(.bd-particle, .bd-dot), *::before, *::after { animation: none !important; transition: none !important; }
+  *:not(.bd-particle, .bd-dot, .bd-blob), *::before, *::after { animation: none !important; transition: none !important; }
 }
 
 /* === Режим поиска: имя или текст ======================================= */
@@ -1806,9 +1806,28 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(70% 60% at 78% 10%, rgba(64, 120, 200, 0.38), transparent 62%),
-    radial-gradient(60% 55% at 10% 92%, rgba(20, 84, 150, 0.46), transparent 66%),
-    radial-gradient(45% 40% at 46% 52%, rgba(96, 64, 170, 0.16), transparent 72%);
+    radial-gradient(70% 60% at 78% 10%, rgba(64, 120, 200, 0.3), transparent 62%),
+    radial-gradient(60% 55% at 10% 92%, rgba(20, 84, 150, 0.36), transparent 66%);
+}
+
+/* Сияние в духе обоев macOS Big Sur: три огромных мягких пятна медленно плывут
+   и меняют форму. Градиент уже мягкий — размывать нечего, двигается только transform. */
+.bd-blob {
+  position: absolute;
+  width: 72vmax;
+  height: 72vmax;
+  border-radius: 50%;
+  opacity: var(--bd-blob-opacity, 0.62);
+  animation: bd-drift ease-in-out infinite alternate;
+  will-change: transform;
+}
+.bd-blob-1 { left: -24vmax; top: -30vmax; background: radial-gradient(closest-side, #2f6bff, transparent); animation-duration: 47s; }
+.bd-blob-2 { right: -28vmax; top: 4vh; background: radial-gradient(closest-side, #8b3fe0, transparent); animation-duration: 61s; animation-delay: -20s; animation-direction: alternate-reverse; }
+.bd-blob-3 { left: 10vw; bottom: -40vmax; background: radial-gradient(closest-side, #ff5a6e, rgba(255, 154, 74, 0.6) 45%, transparent); animation-duration: 53s; animation-delay: -35s; }
+@keyframes bd-drift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(9vw, -5vh, 0) scale(1.18, 0.92); }
+  to { transform: translate3d(-6vw, 7vh, 0) scale(0.94, 1.12); }
 }
 
 .bd-particles { position: absolute; inset: 0; }
@@ -1849,23 +1868,48 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 /* Интерфейс поверх неба — чуть прозрачный. Бумага с текстом и кодом остаётся
    непрозрачной: читаемость важнее. */
 :root[data-backdrop="particles"] {
-  background: #021027;
+  background: #040817;
   --sidebar: rgba(6, 9, 18, 0.88);
   --raised: rgba(30, 33, 44, 0.94);
   --raised-hover: rgba(42, 46, 60, 0.96);
   --hair: rgba(255, 255, 255, 0.07);
   --main-tint: rgba(4, 7, 16, 0.8);
+  --glass: rgba(12, 14, 28, 0.4); /* стекло: боковая панель и строка поиска */
+  --glass-blur: blur(22px) saturate(170%);
 }
 :root[data-backdrop="particles"] body { background: transparent; }
-:root[data-backdrop="particles"] .main { background: var(--main-tint); }
+
+/* Как в macOS: боковая панель и строка поиска — матовое стекло, сквозь которое
+   видны сияние и светлячки; список, предпросмотр и декодер — плотнее, ради текста.
+   Размытие только на узких полосах, поэтому дёшево. */
+:root[data-backdrop="particles"] .sidebar,
+:root[data-backdrop="particles"] .toolbar,
+:root[data-backdrop="particles"] .scopebar {
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+:root.bd-lite[data-backdrop="particles"] .sidebar,
+:root.bd-lite[data-backdrop="particles"] .toolbar,
+:root.bd-lite[data-backdrop="particles"] .scopebar {
+  /* Слабая видеокарта: без размытия, только тонировка (см. watchSmoothness). */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: var(--sidebar);
+}
+:root[data-backdrop="particles"] .results,
+:root[data-backdrop="particles"] .statusbar,
+:root[data-backdrop="particles"] .decoder { background: var(--main-tint); }
 
 :root[data-theme="light"][data-backdrop="particles"] {
-  background: #dfe8f6;
+  background: #e4ebf7;
+  --bd-blob-opacity: 0.42;
   --sidebar: rgba(247, 249, 253, 0.86);
   --raised: rgba(255, 255, 255, 0.9);
   --raised-hover: rgba(255, 255, 255, 0.96);
   --hair: rgba(20, 40, 80, 0.1);
   --main-tint: rgba(251, 252, 255, 0.78);
+  --glass: rgba(255, 255, 255, 0.42);
 }
 :root[data-theme="light"] .backdrop { --bd-glow: hsl(212 85% 62% / 0.55); }
 :root[data-theme="light"] .bd-sky { background: none; }
@@ -1925,9 +1969,10 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 .bd-swatch-none { background: linear-gradient(135deg, var(--bg) 0 50%, var(--raised) 50%); }
 .bd-swatch-particles {
   background:
-    radial-gradient(80% 70% at 80% 10%, rgba(64, 120, 200, 0.5), transparent 65%),
-    radial-gradient(70% 70% at 10% 95%, rgba(20, 84, 150, 0.6), transparent 70%),
-    #021027;
+    radial-gradient(70% 80% at 12% 8%, rgba(47, 107, 255, 0.75), transparent 70%),
+    radial-gradient(60% 80% at 92% 30%, rgba(139, 63, 224, 0.7), transparent 70%),
+    radial-gradient(70% 70% at 45% 110%, rgba(255, 90, 110, 0.75), rgba(255, 154, 74, 0.35) 45%, transparent 75%),
+    #040817;
 }
 .bd-swatch-particles i {
   position: absolute;
