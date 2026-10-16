@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { BoardModel, MAX_CARD_WIDTH, MIN_CARD_HEIGHT, MIN_CARD_WIDTH } from './board-model'
+import {
+  BoardModel, MAX_CARD_WIDTH, MAX_FONT, MIN_CARD_HEIGHT, MIN_CARD_WIDTH, MIN_FONT, bodySizeOf, fontSizeOf, stepFont,
+} from './board-model'
 
 const size = () => ({ w: 200, h: 80 })
 
@@ -95,6 +97,44 @@ describe('карточки', () => {
     const spot = m.placeBeside(a.id, size)
     expect(spot.x).toBe(280)
     expect(m.cardsInRect({ x: spot.x, y: spot.y, w: 220, h: MIN_CARD_HEIGHT }, size)).toEqual([])
+  })
+})
+
+describe('текст карточки', () => {
+  it('старые размеры s/m/l читаются как пиксели', () => {
+    const { m, a, b, c } = board()
+    m.update(a.id, { size: 's' })
+    m.update(c.id, { size: 'l' })
+    expect([fontSizeOf(m.cards.get(a.id)!), fontSizeOf(m.cards.get(b.id)!), fontSizeOf(m.cards.get(c.id)!)]).toEqual([12, 14, 19])
+  })
+
+  it('размер ограничен и заменяет старый формат', () => {
+    const { m, a, b } = board()
+    m.update(a.id, { size: 'l' })
+    m.setFontSize([a.id, b.id], 200)
+    expect(fontSizeOf(m.cards.get(a.id)!)).toBe(MAX_FONT)
+    expect(m.cards.get(a.id)!.size).toBeUndefined()
+    m.setFontSize([a.id], 3)
+    expect(fontSizeOf(m.cards.get(a.id)!)).toBe(MIN_FONT)
+  })
+
+  it('ступени размера и текст мельче заголовка', () => {
+    expect(stepFont(14, 1)).toBe(16)
+    expect(stepFont(15, 1)).toBe(16)
+    expect(stepFont(14, -1)).toBe(12)
+    expect(stepFont(MAX_FONT, 1)).toBe(MAX_FONT)
+    expect(stepFont(MIN_FONT, -1)).toBe(MIN_FONT)
+    const { m, a } = board()
+    m.setFontSize([a.id], 40)
+    expect(bodySizeOf(m.cards.get(a.id)!)).toBeLessThan(40)
+  })
+
+  it('цвет текста отменяется', () => {
+    const { m, a } = board()
+    m.commit()
+    m.update(a.id, { textColor: '#30d158' })
+    m.undo()
+    expect(m.cards.get(a.id)!.textColor).toBeUndefined()
   })
 })
 

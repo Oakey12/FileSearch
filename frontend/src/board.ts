@@ -12,7 +12,10 @@
 //   стрелки — сдвиг (Shift — крупнее), Alt+стрелки — размер, Esc — отмена.
 
 import * as Go from '../wailsjs/go/main/App'
-import { BoardModel, CARD_WIDTH, MIN_CARD_HEIGHT, type BoardData, type Card, type Link, type TextSize } from './board-model'
+import {
+  BoardModel, CARD_WIDTH, MAX_FONT, MIN_CARD_HEIGHT, MIN_FONT, bodySizeOf, fontSizeOf, stepFont,
+  type BoardData, type Card, type Link,
+} from './board-model'
 import { baseName, kindOf } from './format'
 import type { FileItem } from './list'
 import { toast } from './toast'
@@ -28,7 +31,13 @@ const COLORS: [string, string][] = [
   ['', 'Без цвета'], ['#0a84ff', 'Синий'], ['#30d158', 'Зелёный'], ['#ffd60a', 'Жёлтый'],
   ['#ff9f0a', 'Оранжевый'], ['#ff453a', 'Красный'], ['#bf5af2', 'Фиолетовый'],
 ]
+// Цвета текста подобраны так, чтобы читаться на тёмной карточке.
+const TEXT_COLORS: [string, string][] = [
+  ['', 'Обычный'], ['#98989d', 'Серый'], ['#64d2ff', 'Голубой'], ['#409cff', 'Синий'], ['#30d158', 'Зелёный'],
+  ['#ffd60a', 'Жёлтый'], ['#ff9f0a', 'Оранжевый'], ['#ff6961', 'Красный'], ['#da8fff', 'Фиолетовый'],
+]
 const GRID = 24
+const SETTLE_MS = 150 // через столько после жеста холст перерисовывается в точном масштабе
 const MIN_ZOOM = 0.25
 const MAX_ZOOM = 2.5
 const DOUBLE_CLICK_MS = 400
@@ -77,6 +86,9 @@ export class Board {
   private loaded = false
   private saveTimer = 0
   private barFrame = 0
+  private settleTimer = 0
+  private textPopOpen = false
+  private sliderCommitted = false
 
   private viewport = byId<HTMLDivElement>('boardViewport')
   private world = byId<HTMLDivElement>('boardWorld')
@@ -107,7 +119,9 @@ export class Board {
     this.viewport.addEventListener('paste', (e) => this.onPaste(e))
     // Кнопки панели не забирают фокус: после перестройки панели клавиши
     // (Tab, Delete, Ctrl+Z) должны по-прежнему доходить до холста.
-    this.bar.addEventListener('pointerdown', (e) => e.preventDefault())
+    this.bar.addEventListener('pointerdown', (e) => {
+      if ((e.target as HTMLElement).tagName !== 'INPUT') e.preventDefault() // ползунок должен тянуться
+    })
 
     byId('boardAdd').addEventListener('click', () => this.addCardAtCenter())
     byId('boardAddNote').addEventListener('click', () => this.toggleNotePicker())
@@ -151,6 +165,11 @@ export class Board {
 
   /** Esc внутри холста: выйти из правки, режима связи или снять выделение. */
   handleEscape(): boolean {
+    if (this.textPopOpen) {
+      this.textPopOpen = false
+      this.buildBar()
+      return true
+    }
     if (!this.notePicker.hidden) {
       this.notePicker.hidden = true
       return true
@@ -257,8 +276,17 @@ export class Board {
     const el = this.cardEls.get(id)
     if (!card || !el) return
     const kind = card.path ? 'card-file' : card.noteId ? 'card-noteref' : ''
-    el.className = ['card', kind, card.fill && card.color ? 'card-filled' : '', `card-size-${card.size ?? 'm'}`,
+    el.className = ['card', kind, card.fill && card.color ? 'card-filled' : '',
       this.selection.has(id) ? 'selected' : '', this.connectFrom === id ? 'connect-source' : ''].filter(Boolean).join(' ')
+    el.style.setProperty('--title-size', `${fontSizeOf(card)}px`)
+    el.style.setProperty('--text-size', `${bodySizeOf(card)}px`)
+    if (card.textColor) {
+      el.style.setProperty('--title-color', card.textColor)
+      el.style.setProperty('--body-color', `color-mix(in srgb, ${card.textColor} 78%, transparent)`)
+    } else {
+      el.style.removeProperty('--title-color')
+      el.style.removeProperty('--body-color')
+    }
     el.style.transform = `translate(${card.x}px, ${card.y}px)`
     el.style.width = `${card.w}px`
     el.style.minHeight = `${card.h ?? MIN_CARD_HEIGHT}px`
@@ -372,6 +400,7 @@ export class Board {
   // --- Выделение и панель инструментов ------------------------------------
 
   private select(ids: Iterable<string>, link: string | null = null): void {
+    this.textPopOpen = false
     this.selection = new Set(ids)
     this.selectedLink = link
     this.applySelection()
@@ -414,24 +443,26 @@ export class Board {
       fill.disabled = cards.every((c) => !c.color)
       this.bar.append(separator(), fill)
 
-      if (cards.every((c) => !c.path && !c.noteId)) {
-        const sizes = document.createElement('div')
-        sizes.className = 'bar-sizes'
-        sizes.setAttribute('role', 'radiogroup')
-        sizes.setAttribute('aria-label', 'Размер текста')
-        for (const [size, label, name] of [['s', 'A', 'Мелкий текст'], ['m', 'A', 'Обычный текст'], ['l', 'A', 'Крупный текст']] as [TextSize, string, string][]) {
-          const b = document.createElement('button')
-          b.type = 'button'
-          b.className = `bar-size bar-size-${size}`
-          b.textContent = label
-          b.title = name
-          b.setAttribute('role', 'radio')
-          b.setAttribute('aria-checked', String(cards.every((c) => (c.size ?? 'm') === size)))
-          b.addEventListener('click', () => this.edit(() => cards.forEach((c) => this.model.update(c.id, { size }))))
-          sizes.appendChild(b)
-        }
-        this.bar.appendChild(sizes)
-      }
+      const textButton = document.createElement('button')
+      textButton.type = 'button'
+      textButton.className = 'tool-btn bar-textbtn'
+      textButton.title = 'Текст: размер и цвет (Ctrl+Shift+> / Ctrl+Shift+<)'
+      textButton.setAttribute('aria-expanded', String(this.textPopOpen))
+      textButton.setAttribute('aria-pressed', String(this.textPopOpen))
+      const aa = document.createElement('span')
+      aa.className = 'bar-aa'
+      aa.textContent = 'Aa'
+      aa.style.color = first.textColor || ''
+      const sizeLabel = document.createElement('span')
+      sizeLabel.className = 'bar-size-num'
+      sizeLabel.textContent = String(fontSizeOf(first))
+      textButton.append(aa, sizeLabel)
+      textButton.addEventListener('click', () => {
+        this.textPopOpen = !this.textPopOpen
+        this.buildBar()
+      })
+      this.bar.appendChild(textButton)
+      if (this.textPopOpen) this.bar.appendChild(this.textPopover(cards))
 
       this.bar.appendChild(separator())
       if (cards.length === 1) {
@@ -451,6 +482,77 @@ export class Board {
     }
     this.bar.hidden = !this.bar.childElementCount
     this.positionBar()
+  }
+
+  /** Окошко «Текст»: размер (−/+, ползунок) и цвет. */
+  private textPopover(cards: Card[]): HTMLElement {
+    const ids = cards.map((c) => c.id)
+    const size = fontSizeOf(cards[0])
+    const pop = document.createElement('div')
+    pop.className = 'bar-pop'
+    pop.setAttribute('role', 'dialog')
+    pop.setAttribute('aria-label', 'Текст карточки')
+
+    const sizeRow = document.createElement('div')
+    sizeRow.className = 'pop-row'
+    const sizeTitle = document.createElement('span')
+    sizeTitle.className = 'pop-label'
+    sizeTitle.textContent = 'Размер'
+    const value = document.createElement('span')
+    value.className = 'pop-value'
+    value.textContent = `${size}`
+    const minus = button('i-minus', 'Мельче (Ctrl+Shift+<)', () => this.edit(() => this.model.setFontSize(ids, stepFont(fontSizeOf(this.model.cards.get(ids[0])!), -1))))
+    const plus = button('i-plus', 'Крупнее (Ctrl+Shift+>)', () => this.edit(() => this.model.setFontSize(ids, stepFont(fontSizeOf(this.model.cards.get(ids[0])!), 1))))
+    minus.disabled = size <= MIN_FONT
+    plus.disabled = size >= MAX_FONT
+    sizeRow.append(sizeTitle, minus, value, plus)
+
+    const slider = document.createElement('input')
+    slider.type = 'range'
+    slider.className = 'pop-slider'
+    slider.min = String(MIN_FONT)
+    slider.max = String(MAX_FONT)
+    slider.step = '1'
+    slider.value = String(size)
+    slider.setAttribute('aria-label', 'Размер текста')
+    slider.style.setProperty('--fill', `${((size - MIN_FONT) / (MAX_FONT - MIN_FONT)) * 100}%`)
+    slider.addEventListener('input', () => {
+      // Одна запись в истории на всё движение ползунка.
+      if (!this.sliderCommitted) {
+        this.model.commit()
+        this.sliderCommitted = true
+      }
+      const v = Number(slider.value)
+      this.model.setFontSize(ids, v)
+      value.textContent = `${v}`
+      slider.style.setProperty('--fill', `${((v - MIN_FONT) / (MAX_FONT - MIN_FONT)) * 100}%`)
+      for (const id of ids) this.updateCardEl(id)
+    })
+    slider.addEventListener('change', () => {
+      this.sliderCommitted = false
+      this.buildBar()
+      this.changed()
+    })
+
+    const colorRow = document.createElement('div')
+    colorRow.className = 'pop-row pop-colors'
+    const colorTitle = document.createElement('span')
+    colorTitle.className = 'pop-label'
+    colorTitle.textContent = 'Цвет'
+    colorRow.appendChild(colorTitle)
+    for (const [color, name] of TEXT_COLORS) {
+      const swatch = document.createElement('button')
+      swatch.type = 'button'
+      swatch.className = color ? 'swatch' : 'swatch swatch-auto'
+      swatch.title = name
+      swatch.style.setProperty('--swatch', color || '#f2f2f4')
+      swatch.setAttribute('aria-pressed', String(cards.every((c) => (c.textColor ?? '') === color)))
+      swatch.addEventListener('click', () => this.edit(() => ids.forEach((id) => this.model.update(id, { textColor: color || undefined }))))
+      colorRow.appendChild(swatch)
+    }
+
+    pop.append(sizeRow, slider, colorRow)
+    return pop
   }
 
   private scheduleBar(): void {
@@ -484,9 +586,14 @@ export class Board {
     const vw = this.viewport.clientWidth
     const left = Math.min(vw - barW - 8, Math.max(8, x + ((minX + maxX) / 2) * k - barW / 2))
     let top = y + minY * k - barH - 12
-    if (top < 8) top = y + maxY * k + 12
+    const barAbove = top >= 8
+    if (!barAbove) top = y + maxY * k + 12
     top = Math.min(this.viewport.clientHeight - barH - 64, Math.max(8, top))
     this.bar.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`
+    // Окошко «Текст» раскрывается в сторону от карточки, чтобы изменения были видны.
+    // Если над панелью нет места — вниз.
+    const popH = this.bar.querySelector<HTMLElement>('.bar-pop')?.offsetHeight ?? 150
+    this.bar.classList.toggle('pop-above', barAbove ? top > popH + 16 : top > this.viewport.clientHeight - top - barH)
   }
 
   private updateHistoryButtons(): void {
@@ -702,8 +809,20 @@ export class Board {
 
   // --- Вид: сдвиг и масштаб ----------------------------------------------------
 
+  /**
+   * Во время жеста слой холста двигается как готовая картинка (will-change) —
+   * это плавно. Через SETTLE_MS после остановки will-change снимается, и браузер
+   * перерисовывает текст и рамки в точном масштабе — без размытия при приближении.
+   * Сдвиг округляется до экранного пикселя: дробные пиксели тоже размывают текст.
+   */
   private applyView(): void {
-    const { x, y, k } = this.model.view
+    const { k } = this.model.view
+    const dpr = window.devicePixelRatio || 1
+    const x = Math.round(this.model.view.x * dpr) / dpr
+    const y = Math.round(this.model.view.y * dpr) / dpr
+    this.world.classList.add('moving')
+    clearTimeout(this.settleTimer)
+    this.settleTimer = window.setTimeout(() => this.world.classList.remove('moving'), SETTLE_MS)
     this.world.style.transform = `translate(${x}px, ${y}px) scale(${k})`
     const size = GRID * k
     this.viewport.style.backgroundSize = `${size}px ${size}px`
@@ -996,7 +1115,7 @@ export class Board {
   // --- Клавиатура --------------------------------------------------------------
 
   private onKey(e: KeyboardEvent): void {
-    if (this.editing) return
+    if (this.editing || (e.target as HTMLElement).tagName === 'INPUT') return // стрелки ползунка — его собственные
     const ctrl = e.ctrlKey || e.metaKey
     const code = e.code
     const ids = [...this.selection]
@@ -1011,6 +1130,10 @@ export class Board {
     } else if (ctrl && code === 'KeyA') {
       e.preventDefault()
       this.select(this.model.cards.keys())
+    } else if (ctrl && e.shiftKey && (code === 'Period' || code === 'Comma') && ids.length) {
+      e.preventDefault()
+      const dir = code === 'Period' ? 1 : -1
+      this.edit(() => this.model.setFontSize(ids, stepFont(fontSizeOf(this.model.cards.get(ids[0])!), dir)))
     } else if (ctrl && code === 'KeyD') {
       e.preventDefault()
       this.duplicateSelection()
