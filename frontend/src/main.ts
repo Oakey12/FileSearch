@@ -8,7 +8,7 @@ import { parseTerms } from './highlight'
 import { Inspector, type PreviewResult } from './inspector'
 import { VirtualList, type FileItem } from './list'
 import { WINDOW_BG, currentTheme, saveTheme, switchTheme, type Theme } from './theme'
-import { applyBackdrop, currentBackdrop, mountParticles, saveBackdrop, watchSmoothness, type Backdrop } from './backdrop'
+import { applyBackdrop, currentBackdrop, mountForest, mountParticles, saveBackdrop, watchSmoothness, type Backdrop } from './backdrop'
 import { toast } from './toast'
 
 // --- События из Go ------------------------------------------------------
@@ -548,11 +548,17 @@ sheetConfirm.addEventListener('click', async () => {
 
 const themeButton = byId<HTMLButtonElement>('themeToggle')
 
+// Край окна под сценой фона — цвета сцены, чтобы при растягивании не мелькал другой цвет.
+const WINDOW_EDGE: Partial<Record<Backdrop, Record<Theme, [number, number, number]>>> = {
+  particles: { dark: [4, 8, 23], light: [228, 235, 247] },
+  forest: { dark: [7, 19, 20], light: [222, 231, 226] },
+}
+
 // Рамка и заголовок окна — средствами Wails; в браузере при разработке их может не быть.
 function syncWindowTheme(theme: Theme): void {
   try {
     // Под фоном «Частицы» край окна — цвета неба.
-    const [r, g, b] = currentBackdrop() === 'particles' ? (theme === 'light' ? [228, 235, 247] : [4, 8, 23]) : WINDOW_BG[theme]
+    const [r, g, b] = WINDOW_EDGE[currentBackdrop()]?.[theme] ?? WINDOW_BG[theme]
     WindowSetBackgroundColour(r, g, b, 255)
     if (theme === 'light') WindowSetLightTheme()
     else WindowSetDarkTheme()
@@ -582,6 +588,7 @@ const backdropButton = byId<HTMLButtonElement>('backdropButton')
 const backdropMenu = byId<HTMLElement>('backdropMenu')
 const backdropOptions = [...backdropMenu.querySelectorAll<HTMLButtonElement>('.bd-option')]
 const particlesHost = byId<HTMLElement>('bdParticles')
+const forestScene = byId<HTMLElement>('bdForestScene')
 let unmountParticles: (() => void) | null = null
 let stopWatching: (() => void) | null = null
 
@@ -590,9 +597,12 @@ function setBackdrop(value: Backdrop): void {
   unmountParticles?.()
   stopWatching?.()
   document.documentElement.classList.remove('bd-lite')
-  unmountParticles = value === 'particles' ? mountParticles(particlesHost) : null
+  unmountParticles =
+    value === 'particles' ? mountParticles(particlesHost)
+    : value === 'forest' ? mountForest(forestScene, byId('bdForest'), byId('bdFireflies'))
+    : null
   // На слабом компьютере стекло без размытия — чтобы ничего не тормозило.
-  stopWatching = value === 'particles' ? watchSmoothness(() => document.documentElement.classList.add('bd-lite')) : null
+  stopWatching = value !== 'none' ? watchSmoothness(() => document.documentElement.classList.add('bd-lite')) : null
   for (const o of backdropOptions) {
     const on = o.dataset.backdrop === value
     o.setAttribute('aria-checked', String(on))
