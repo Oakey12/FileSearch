@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Поиск файлов</title>
   <!-- Светлая тема ставится до первой отрисовки, чтобы окно не мигало тёмным. Ключ — THEME_KEY в theme.ts. -->
-  <script>try { if (localStorage.getItem('theme') === 'light') document.documentElement.dataset.theme = 'light' } catch (e) {}</script>
+  <script>try { if (localStorage.getItem('theme') === 'light' && localStorage.getItem('backdrop') !== 'forest') document.documentElement.dataset.theme = 'light' } catch (e) {}</script>
   <!-- Фон «Частицы» — тоже до отрисовки: от него зависит прозрачность панелей. Ключ — BACKDROP_KEY в backdrop.ts. -->
   <script>try { var b = localStorage.getItem('backdrop'); if (b === 'particles' || b === 'forest') document.documentElement.dataset.backdrop = b } catch (e) {}</script>
-  <script type="module" crossorigin src="/assets/index-8cPdi-td.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-Cv67mlWa.css">
+  <script type="module" crossorigin src="/assets/index-Cd8dg0Z4.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DosT6_hb.css">
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -51,8 +51,6 @@
       <div class="bd-particles" id="bdParticles"></div>
     </div>
     <div class="bd-scene bd-scene-forest" id="bdForestScene">
-      <div class="bd-forest" id="bdForest"></div>
-      <div class="bd-fog"></div>
       <div class="bd-fireflies" id="bdFireflies"></div>
     </div>
   </div>
