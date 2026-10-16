@@ -5,7 +5,6 @@ import (
 	"compress/zlib"
 	"errors"
 	"io"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -31,35 +30,35 @@ var oleSignature = []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
 // IsOLE сообщает, что данные — составной документ OLE (как .ert).
 func IsOLE(b []byte) bool { return bytes.HasPrefix(b, oleSignature) }
 
-type ertStream struct {
-	path string
-	data []byte
+// stream77 — поток внутри файла 7.7; данные читаются по требованию.
+type stream77 struct {
+	path  string
+	entry *mscfb.File
 }
 
-func readOLE(path string) ([]ertStream, error) {
-	f, err := os.Open(path)
+func (s stream77) read() ([]byte, error) {
+	if s.entry.Size > maxInflated {
+		return nil, errors.New("слишком большой поток")
+	}
+	buf := make([]byte, s.entry.Size)
+	if _, err := io.ReadFull(io.NewSectionReader(s.entry, 0, s.entry.Size), buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+// listOLE — потоки составного документа (без чтения их содержимого).
+func listOLE(src io.ReaderAt) ([]stream77, error) {
+	doc, err := mscfb.New(src)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	doc, err := mscfb.New(f)
-	if err != nil {
-		return nil, err
-	}
-	var out []ertStream
-	total := 0
-	for entry, err := doc.Next(); err == nil; entry, err = doc.Next() {
+	var out []stream77
+	for _, entry := range doc.File {
 		if entry.FileInfo().IsDir() {
 			continue
 		}
-		if total += int(entry.Size); total > maxInflated {
-			return nil, errors.New("слишком большой файл")
-		}
-		data, err := io.ReadAll(io.LimitReader(entry, maxInflated))
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, ertStream{path: strings.Join(append(append([]string{}, entry.Path...), entry.Name), "/"), data: data})
+		out = append(out, stream77{path: strings.Join(append(append([]string{}, entry.Path...), entry.Name), "/"), entry: entry})
 	}
 	return out, nil
 }
@@ -132,13 +131,14 @@ var (
 
 // open77 читает .ert (внешняя обработка 7.7) и .md (конфигурация 7.7):
 // все модули во всех хранилищах, имена объектов — из главного потока метаданных.
-func open77(path string) (*File, error) {
-	streams, err := readOLE(path)
+// Сразу читаются только метаданные, модули — по запросу.
+func open77(path string, file *File) error {
+	streams, err := listOLE(file.src)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	isMD := strings.EqualFold(filepath.Ext(path), ".md")
-	file := &File{setters: map[string]func(string){}, ole77Path: path, ole77Edits: map[string]string{}}
+	file.ole77Edits = map[string]string{}
 	doc := &file.Doc
 	doc.Format = "1С:Предприятие 7.7"
 	doc.Kind = "Внешняя обработка или отчёт"
@@ -152,9 +152,13 @@ func open77(path string) (*File, error) {
 	kinds := map[string]string{}
 	for _, s := range streams {
 		if strings.HasSuffix(s.path, "Main MetaData Stream") {
-			raw := cutMFCLength(s.data)
+			data, err := s.read()
+			if err != nil {
+				return err
+			}
+			raw := cutMFCLength(data)
 			if !isMostlyText(raw) {
-				raw, _ = unpack77(s.data)
+				raw, _ = unpack77(data)
 			}
 			for _, m := range metaName77Re.FindAllStringSubmatch(cp1251(raw), -1) {
 				if _, ok := names[m[1]]; !ok {
@@ -180,20 +184,17 @@ func open77(path string) (*File, error) {
 			if s.path == ertModuleStream {
 				sec.ID = "module" // модуль внешней обработки
 			}
-			text, ok := unpack77(s.data)
-			if ok || isMostlyText(text) {
-				sec.Text = normalizeEOL(cp1251(text))
-				streamPath := s.path
-				file.setters[sec.ID] = func(text string) { file.ole77Edits[streamPath] = text }
-			} else {
-				sec.Note = "Модуль не удалось прочитать: возможно, он защищён паролем."
-				sec.Editable = false
-			}
-			doc.Sections = append(doc.Sections, sec)
+			file.addPart(sec, module77(file, s))
 		case leaf == ertDialogStream && !isMD:
-			doc.Sections = append(doc.Sections, Section{
-				ID: "dialog", Group: "Формы", Title: "Форма (описание диалога)", Kind: "text",
-				Text: normalizeEOL(cp1251(cutMFCLength(s.data))),
+			s := s
+			file.addPart(Section{ID: "dialog", Group: "Формы", Title: "Форма (описание диалога)", Kind: "text"}, part{
+				load: func() (SectionContent, error) {
+					data, err := s.read()
+					if err != nil {
+						return SectionContent{}, err
+					}
+					return SectionContent{Text: normalizeEOL(cp1251(cutMFCLength(data)))}, nil
+				},
 			})
 		case !isMD:
 			other = append(other, s.path)
@@ -201,17 +202,42 @@ func open77(path string) (*File, error) {
 	}
 	if len(other) > 0 {
 		sort.Strings(other)
-		doc.Sections = append(doc.Sections, Section{
-			ID: "streams", Group: "Описание", Title: "Состав файла", Kind: "text",
-			Text: "Потоки внутри файла:\n" + strings.Join(other, "\n"),
+		text := "Потоки внутри файла:\n" + strings.Join(other, "\n")
+		file.addPart(Section{ID: "streams", Group: "Описание", Title: "Состав файла", Kind: "text"}, part{
+			load: func() (SectionContent, error) { return SectionContent{Text: text}, nil },
 		})
 	}
 	if len(doc.Sections) == 0 {
-		return nil, errors.New("в файле нет модулей 1С 7.7")
+		return errors.New("в файле нет модулей 1С 7.7")
 	}
-	sort7(doc.Sections, isMD)
-	doc.CanSave = len(file.setters) > 0
-	return file, nil
+	sort7(file, isMD)
+	doc.CanSave = true
+	return nil
+}
+
+// module77 — модуль 7.7: deflate + Windows-1251. Правка запоминается и
+// записывается в файл при сохранении.
+func module77(file *File, s stream77) part {
+	return part{
+		load: func() (SectionContent, error) {
+			if text, ok := file.ole77Edits[s.path]; ok {
+				return SectionContent{Text: normalizeEOL(text), Editable: true}, nil
+			}
+			data, err := s.read()
+			if err != nil {
+				return SectionContent{}, err
+			}
+			text, ok := unpack77(data)
+			if !ok && !isMostlyText(text) {
+				return SectionContent{Note: "Модуль не удалось прочитать: возможно, он защищён паролем."}, nil
+			}
+			return SectionContent{Text: normalizeEOL(cp1251(text)), Editable: true}, nil
+		},
+		set: func(text string) error {
+			file.ole77Edits[s.path] = text
+			return nil
+		},
+	}
 }
 
 // describe77 — группа и название модуля по пути потока внутри файла 7.7.
@@ -242,7 +268,7 @@ func describe77(path string, names, kinds map[string]string) (group, title strin
 		group = kinds[id]
 	}
 	switch {
-	case parts[0] == "GlobalData" || (id == "" && len(parts) <= 2):
+	case parts[0] == "GlobalData" || (id == "" && len(parts) <= 2) || group == "Конфигурация":
 		return "Конфигурация", "Глобальный модуль"
 	case group == "":
 		group = "Прочие модули"
@@ -256,7 +282,7 @@ func describe77(path string, names, kinds map[string]string) (group, title strin
 var groupOrder77 = []string{"Модули", "Формы", "Конфигурация", "Справочники", "Документы", "Журналы документов",
 	"Отчёты", "Журналы расчётов", "Виды расчётов", "Регистры", "Пользовательские", "Прочие модули", "Описание"}
 
-func sort7(secs []Section, isMD bool) {
+func sort7(file *File, isMD bool) {
 	rank := func(g string) int {
 		for i, x := range groupOrder77 {
 			if x == g {
@@ -265,12 +291,24 @@ func sort7(secs []Section, isMD bool) {
 		}
 		return len(groupOrder77)
 	}
-	sort.SliceStable(secs, func(i, j int) bool {
-		if ri, rj := rank(secs[i].Group), rank(secs[j].Group); ri != rj {
+	secs := file.Doc.Sections
+	idx := make([]int, len(secs))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(i, j int) bool {
+		a, b := secs[idx[i]], secs[idx[j]]
+		if ri, rj := rank(a.Group), rank(b.Group); ri != rj {
 			return ri < rj
 		}
-		return isMD && secs[i].Title < secs[j].Title
+		return isMD && a.Title < b.Title
 	})
+	sorted := make([]Section, len(secs))
+	parts := make([]part, len(secs))
+	for i, k := range idx {
+		sorted[i], parts[i] = secs[k], file.parts[k]
+	}
+	file.Doc.Sections, file.parts = sorted, parts
 }
 
 // isMostlyText — грубая проверка, что байты похожи на текст, а не на мусор.

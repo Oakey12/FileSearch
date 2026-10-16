@@ -1,12 +1,13 @@
 import './style.css'
 import * as Go from '../wailsjs/go/main/App'
-import { EventsOn, OnFileDrop } from '../wailsjs/runtime/runtime'
+import { EventsOn, OnFileDrop, WindowSetBackgroundColour, WindowSetDarkTheme, WindowSetLightTheme } from '../wailsjs/runtime/runtime'
 import { Decoder, isOneCFile } from './decoder'
 import { Drawer } from './drawer'
 import { baseName, collator, formatCount, kindOf, plural, seconds } from './format'
 import { parseTerms } from './highlight'
 import { Inspector, type PreviewResult } from './inspector'
 import { VirtualList, type FileItem } from './list'
+import { WINDOW_BG, currentTheme, saveTheme, switchTheme, type Theme } from './theme'
 import { toast } from './toast'
 
 // --- События из Go ------------------------------------------------------
@@ -78,10 +79,14 @@ type Mode = 'search' | 'decoder'
 let mode: Mode = 'search'
 const decoderEl = byId<HTMLElement>('decoder')
 
+const homeButton = byId<HTMLButtonElement>('home')
+
 function setMode(next: Mode): void {
   mode = next
   app.classList.toggle('mode-decoder', next === 'decoder')
   decoderEl.hidden = next !== 'decoder'
+  if (next === 'search') homeButton.setAttribute('aria-current', 'page')
+  else homeButton.removeAttribute('aria-current')
   markActiveRecent()
   renderOneCRecent()
 }
@@ -536,6 +541,49 @@ sheetConfirm.addEventListener('click', async () => {
     sheetProgress.hidden = true
     sheetConfirm.disabled = sheetCancel.disabled = false
   }
+})
+
+// --- Тема: тёмная или светлая --------------------------------------------
+
+const themeButton = byId<HTMLButtonElement>('themeToggle')
+
+// Рамка и заголовок окна — средствами Wails; в браузере при разработке их может не быть.
+function syncWindowTheme(theme: Theme): void {
+  try {
+    const [r, g, b] = WINDOW_BG[theme]
+    WindowSetBackgroundColour(r, g, b, 255)
+    if (theme === 'light') WindowSetLightTheme()
+    else WindowSetDarkTheme()
+  } catch { /* без окна Wails — только страница */ }
+}
+
+function renderThemeButton(theme: Theme): void {
+  const light = theme === 'light'
+  themeButton.setAttribute('aria-pressed', String(light))
+  themeButton.title = light ? 'Тёмная тема' : 'Светлая тема'
+  themeButton.querySelector('use')!.setAttribute('href', light ? '#i-moon' : '#i-sun')
+}
+
+themeButton.addEventListener('click', () => {
+  const next: Theme = currentTheme() === 'light' ? 'dark' : 'light'
+  switchTheme(next)
+  saveTheme(next)
+  renderThemeButton(next)
+  syncWindowTheme(next)
+  // Запомнить и в программе: тогда окно сразу откроется в этой теме, без тёмной вспышки.
+  Go.SaveWindowTheme(next).catch(() => {})
+})
+
+// Атрибут уже поставил скрипт в index.html; здесь — кнопка и рамка окна.
+renderThemeButton(currentTheme())
+if (currentTheme() === 'light') syncWindowTheme('light')
+
+// --- Домой: к поиску файлов из любого режима ------------------------------
+
+homeButton.addEventListener('click', () => {
+  drawer.close()
+  if (mode !== 'search') setMode('search')
+  queryInput.focus()
 })
 
 // --- Ввод и горячие клавиши --------------------------------------------

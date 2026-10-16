@@ -19,17 +19,20 @@ const (
 	ordCode    = "Процедура КнопкаНажатие(Элемент)\nКонецПроцедуры\n"
 )
 
+// elem — новый элемент в памяти: при записи кодируется заново.
 func elem(name string, payload []byte, deflated bool) *v8Elem {
-	e := &v8Elem{Name: name, header: newElemHeader(name), payload: payload, deflated: deflated}
-	if IsV8(payload) {
-		e.child, _ = parseContainer(payload, 1)
+	return &v8Elem{Name: name, header: newElemHeader(name), payload: payload, deflated: deflated,
+		f: format15, addr: undef32, loaded: true, dirty: true}
+}
+
+// stored — данные элемента в том виде, как они лежат в файле.
+func stored(t *testing.T, e *v8Elem) []byte {
+	t.Helper()
+	b, err := readBlock(e.src, e.srcLen, e.f, e.addr)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if deflated {
-		e.stored, _ = deflate(payload)
-	} else {
-		e.stored = payload
-	}
-	return e
+	return b
 }
 
 func mustBytes(t *testing.T, c *container) []byte {
@@ -142,12 +145,21 @@ func TestSaveEPF(t *testing.T) {
 	}
 
 	// Нетронутые элементы переносятся побайтно, у изменённых сохраняются BOM и \r\n.
+	t.Cleanup(func() { f.release(); g.release() })
 	for _, name := range []string{"root", mainGUID, objectID + ".1", ordFormID + ".0", "version"} {
-		if !bytes.Equal(f.v8.find(name).stored, g.v8.find(name).stored) {
+		if !bytes.Equal(stored(t, f.v8.find(name)), stored(t, g.v8.find(name))) {
 			t.Errorf("элемент %s изменился, хотя его не трогали", name)
 		}
 	}
-	text := g.v8.find(objectID + ".0").child.find("text").payload
+	obj := g.v8.find(objectID + ".0")
+	if err := obj.load(); err != nil {
+		t.Fatal(err)
+	}
+	inner := obj.child.find("text")
+	if err := inner.load(); err != nil {
+		t.Fatal(err)
+	}
+	text := inner.payload
 	if !bytes.HasPrefix(text, []byte(bom)) || !bytes.Contains(text, []byte("\r\n")) {
 		t.Errorf("модуль объекта потерял BOM или \\r\\n: %q", text[:min(len(text), 20)])
 	}
@@ -239,7 +251,7 @@ func TestOpenERT(t *testing.T) {
 	if !strings.Contains(section(t, doc, "streams").Text, "Container.Contents") {
 		t.Error("в составе файла нет служебных потоков")
 	}
-	text, err := ExtractText(filepath.Join("testdata", "sample77.ert"))
+	text, err := ExtractText(filepath.Join("testdata", "sample77.ert"), 1<<20)
 	if err != nil || !strings.Contains(text, "Отчёт сформирован") {
 		t.Errorf("текст для поиска: %q, %v", text, err)
 	}
@@ -372,6 +384,7 @@ func TestSaveToOverwrite(t *testing.T) {
 
 // Проверка на настоящей обработке — если указать путь в ONEC_SAMPLE.
 // Сам файл в репозиторий не кладём: это чужая разработка.
+// У большой конфигурации проверяется каждый realSampleStep-й раздел.
 func TestRealSample(t *testing.T) {
 	path := os.Getenv("ONEC_SAMPLE")
 	if path == "" {
@@ -382,42 +395,56 @@ func TestRealSample(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("%s «%s» (%s), разделов: %d", f.Doc.Kind, f.Doc.Name, f.Doc.Synonym, len(f.Doc.Sections))
-	for _, s := range f.Doc.Sections {
-		t.Logf("  [%s] %s — %d символов, правка: %v %s", s.Group, s.Title, len([]rune(s.Text)), s.Editable, s.Note)
+	step := 1
+	if len(f.Doc.Sections) > 500 {
+		step = len(f.Doc.Sections) / 300
 	}
-	if f.Doc.CanSave {
-		resaved := filepath.Join(t.TempDir(), "copy"+filepath.Ext(path))
-		if err := f.SaveTo(resaved, nil); err != nil {
-			t.Fatal(err)
-		}
-		g, err := Open(resaved)
-		if err != nil {
-			t.Fatalf("пересохранённый файл не открывается: %v", err)
-		}
-		if len(g.Doc.Sections) != len(f.Doc.Sections) {
-			t.Fatalf("после пересохранения разделов %d, было %d", len(g.Doc.Sections), len(f.Doc.Sections))
-		}
 
-		// Правка каждого редактируемого раздела переживает сохранение.
-		edits := map[string]string{}
-		for _, s := range f.Doc.Sections {
-			if s.Editable {
-				edits[s.ID] = s.Text + "\n// правка " + s.ID
-			}
-		}
-		dst := filepath.Join(t.TempDir(), "edited"+filepath.Ext(path))
-		if err := f.SaveTo(dst, edits); err != nil {
-			t.Fatal(err)
-		}
-		h, err := Open(dst)
+	// Каждый раздел читается без ошибок; правим каждый step-й редактируемый.
+	edits := map[string]string{}
+	for i, s := range f.Doc.Sections {
+		c, err := f.Content(s.ID)
 		if err != nil {
-			t.Fatalf("изменённый файл не открывается: %v", err)
+			t.Fatalf("%s: %v", s.Title, err)
 		}
-		for _, s := range h.Doc.Sections {
-			if want, ok := edits[s.ID]; ok && strings.ReplaceAll(s.Text, "\r\n", "\n") != strings.ReplaceAll(want, "\r\n", "\n") {
-				t.Errorf("раздел %q после сохранения не совпадает", s.Title)
-			}
+		if testing.Verbose() && len(f.Doc.Sections) < 200 {
+			t.Logf("  [%s] %s — %d строк, правка: %v %s", s.Group, s.Title, c.Lines, c.Editable, c.Note)
 		}
-		t.Logf("правок сохранено: %d", len(edits))
+		if c.Editable && i%step == 0 {
+			edits[s.ID] = c.Text + "\n// правка " + s.ID
+		}
 	}
+	if !f.Doc.CanSave {
+		return
+	}
+	resaved := filepath.Join(t.TempDir(), "copy"+filepath.Ext(path))
+	if err := f.SaveTo(resaved, nil); err != nil {
+		t.Fatal(err)
+	}
+	g, err := Open(resaved)
+	if err != nil {
+		t.Fatalf("пересохранённый файл не открывается: %v", err)
+	}
+	if len(g.Doc.Sections) != len(f.Doc.Sections) {
+		t.Fatalf("после пересохранения разделов %d, было %d", len(g.Doc.Sections), len(f.Doc.Sections))
+	}
+
+	dst := filepath.Join(t.TempDir(), "edited"+filepath.Ext(path))
+	if err := f.SaveTo(dst, edits); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Open(dst)
+	if err != nil {
+		t.Fatalf("изменённый файл не открывается: %v", err)
+	}
+	if len(h.Doc.Sections) != len(f.Doc.Sections) {
+		t.Fatalf("после правок разделов %d, было %d", len(h.Doc.Sections), len(f.Doc.Sections))
+	}
+	for id, want := range edits {
+		got, err := h.Content(id)
+		if err != nil || got.Text != normalizeEOL(want) {
+			t.Errorf("раздел %q после сохранения не совпадает (%v)", id, err)
+		}
+	}
+	t.Logf("правок сохранено и проверено: %d", len(edits))
 }

@@ -28,7 +28,14 @@ export interface OneCDoc {
   format: string
   sections: OneCSection[]
   canSave: boolean
+  lazy?: boolean // большой файл: число строк узнаём, когда модуль открыли
 }
+
+/** Текст раздела, прочитанный по запросу. */
+interface OneCContent { text: string; note?: string; lines: number; editable: boolean }
+
+/** Сколько прочитанных текстов держать (у конфигурации их тысячи). */
+const TEXT_CACHE = 64
 
 // .md здесь нет: это ещё и Markdown. Конфигурацию 7.7 распознаёт предпросмотр и бэкенд.
 export const ONEC_EXTENSIONS = ['epf', 'erf', 'cf', 'cfe', 'ert']
@@ -259,7 +266,7 @@ export class Decoder {
     this.title.textContent = doc.synonym && doc.synonym !== doc.name ? `${doc.name} — ${doc.synonym}` : doc.name
     this.meta.textContent = `${doc.kind}, ${doc.format}. ${baseName(doc.path)}`
     this.renderNav()
-    const first = doc.sections.find((s) => s.kind === 'module' && s.lines > 1) ?? doc.sections[0]
+    const first = doc.sections.find((s) => s.kind === 'module' && (s.lines > 1 || doc.lazy)) ?? doc.sections[0]
     void this.show(first.id)
   }
 
@@ -280,7 +287,7 @@ export class Decoder {
         item.dataset.id = s.id
         item.title = s.title
         item.setAttribute('aria-current', String(s.id === this.currentId))
-        item.append(el('span', 'dnav-title', s.title), el('span', 'dnav-meta', s.lines ? `${s.lines} стр.` : '—'))
+        item.append(el('span', 'dnav-title', s.title), el('span', 'dnav-meta', this.linesLabel(s)))
         if (this.edits.has(s.id)) item.append(el('span', 'dnav-dot'))
         nodes.push(item)
       }
@@ -305,9 +312,14 @@ export class Decoder {
     input.spellcheck = false
     input.value = this.filter
     input.setAttribute('aria-label', 'Фильтр модулей и форм')
+    let timer = 0
     input.addEventListener('input', () => {
-      this.filter = input.value
-      this.renderNav()
+      // У конфигурации тысячи пунктов — перестраиваем список, когда печатать перестали.
+      clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        this.filter = input.value
+        this.renderNav()
+      }, this.doc && this.doc.sections.length > 2000 ? 140 : 0)
     })
     box.append(input)
     return box
@@ -315,6 +327,21 @@ export class Decoder {
 
   private get section(): OneCSection | undefined {
     return this.doc?.sections.find((s) => s.id === this.currentId)
+  }
+
+  private linesLabel(s: OneCSection): string {
+    if (s.lines) return `${s.lines} стр.`
+    return this.doc?.lazy && !this.texts.has(s.id) ? '' : '—'
+  }
+
+  /** Кладёт текст в кеш; самые давние (кроме открытого) вытесняются. */
+  private cacheText(id: string, text: string): void {
+    this.texts.delete(id)
+    this.texts.set(id, text)
+    for (const key of this.texts.keys()) {
+      if (this.texts.size <= TEXT_CACHE) break
+      if (key !== this.currentId && key !== id) this.texts.delete(key)
+    }
   }
 
   private textOf(s: OneCSection): string {
@@ -330,13 +357,19 @@ export class Decoder {
     this.currentId = id
     const s = this.section
     if (!s || !this.doc) return
-    if (!this.texts.has(id) && s.lines) {
-      // Текст модуля большого файла — по запросу.
+    if (!this.texts.has(id) && (s.lines > 0 || this.doc.lazy)) {
+      // Текст модуля — по запросу: в списке разделов текстов нет.
       this.sectionTitle.textContent = s.title
       this.code.textContent = 'Загрузка…'
       try {
-        const text = await Go.OneCSectionText(this.doc.path, id)
-        this.texts.set(id, text)
+        const c = (await Go.OneCSectionText(this.doc.path, id)) as OneCContent
+        this.cacheText(id, c.text)
+        // У большого файла число строк и «можно ли править» известны только теперь.
+        s.lines = c.lines
+        if (c.note) s.note = c.note
+        s.editable = c.editable
+        const meta = this.nav.querySelector(`[data-id="${CSS.escape(id)}"] .dnav-meta`)
+        if (meta) meta.textContent = this.linesLabel(s)
       } catch (err) {
         toast(String(err))
         return
@@ -406,8 +439,17 @@ export class Decoder {
     if (!s) return
     if (this.editor.value === this.original(s)) this.edits.delete(s.id)
     else this.edits.set(s.id, this.editor.value)
-    this.renderNav()
+    this.markEdited(s.id) // не перестраивать весь список на каждую букву
     this.updateButtons()
+  }
+
+  /** Точка «изменён» у пункта списка. */
+  private markEdited(id: string): void {
+    const item = this.nav.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`)
+    if (!item) return
+    const dot = item.querySelector('.dnav-dot')
+    if (this.edits.has(id) && !dot) item.append(el('span', 'dnav-dot'))
+    else if (!this.edits.has(id)) dot?.remove()
   }
 
   private revert(): void {
@@ -416,7 +458,7 @@ export class Decoder {
     this.edits.delete(s.id)
     if (this.editing) this.editor.value = this.original(s)
     this.renderCode()
-    this.renderNav()
+    this.markEdited(s.id)
     this.updateButtons()
     toast('Правки модуля отменены')
   }
