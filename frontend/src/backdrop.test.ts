@@ -47,24 +47,32 @@ describe('выбор фона', () => {
 })
 
 describe('частицы', () => {
-  it('случайные, крупные и сразу разбросаны по небу', () => {
+  it('крупные, размытые, летают по всему окну в разные стороны', () => {
     const ps = makeParticles(400, seeded(7))
     expect(ps).toHaveLength(400)
     for (const p of ps) {
-      expect(p.size).toBeGreaterThanOrEqual(8)
-      expect(p.size).toBeLessThanOrEqual(34)
-      expect(p.y0).toBeGreaterThan(100) // старт ниже окна
-      expect(p.y1).toBeLessThan(-100) // финиш выше окна
-      // Отрицательная задержка: круг уже в пути, а не ждёт старта внизу.
+      expect(p.size).toBeGreaterThanOrEqual(10)
+      expect(p.size).toBeLessThanOrEqual(40)
+      expect(p.blur).toBeGreaterThanOrEqual(1.5)
+      expect(p.blur).toBeLessThanOrEqual(7)
+      expect(p.path).toHaveLength(4)
+      // Отрицательная задержка: с первого кадра светлячок уже в пути.
       expect(p.delay).toBeLessThanOrEqual(0)
       expect(-p.delay).toBeLessThanOrEqual(p.duration)
     }
-    // Разброс по горизонтали — по всему окну, а не кучкой.
-    const xs = ps.map((p) => p.x0)
-    expect(Math.min(...xs)).toBeLessThan(10)
-    expect(Math.max(...xs)).toBeGreaterThan(90)
-    // Пути не вертикальные: начало и конец по горизонтали различаются.
-    expect(ps.filter((p) => Math.abs(p.x1 - p.x0) > 10).length).toBeGreaterThan(ps.length / 2)
+    // Точки — по всему окну, а не кучкой.
+    const xs = ps.flatMap((p) => p.path.map(([x]) => x))
+    const ys = ps.flatMap((p) => p.path.map(([, y]) => y))
+    expect(Math.min(...xs)).toBeLessThan(5)
+    expect(Math.max(...xs)).toBeGreaterThan(95)
+    expect(Math.min(...ys)).toBeLessThan(5)
+    expect(Math.max(...ys)).toBeGreaterThan(95)
+    // В разные стороны: есть и движение вниз, и влево, а не только вверх.
+    const steps = ps.flatMap((p) => p.path.map(([x, y], i) => [p.path[(i + 1) % 4][0] - x, p.path[(i + 1) % 4][1] - y]))
+    expect(steps.some(([, dy]) => dy > 20)).toBe(true)
+    expect(steps.some(([, dy]) => dy < -20)).toBe(true)
+    expect(steps.some(([dx]) => dx < -20)).toBe(true)
+    expect(steps.some(([dx]) => dx > 20)).toBe(true)
   })
 
   it('рисуются, ставятся на паузу на скрытом окне и убираются без следа', () => {
@@ -73,7 +81,9 @@ describe('частицы', () => {
     expect(host.querySelectorAll('.bd-particle')).toHaveLength(PARTICLE_COUNT)
     expect(host.querySelectorAll('.bd-dot')).toHaveLength(PARTICLE_COUNT)
     const first = host.querySelector<HTMLElement>('.bd-particle')!
-    expect(first.style.getPropertyValue('--x0')).toMatch(/vw$/)
+    expect(first.style.getPropertyValue('--x3')).toMatch(/vw$/)
+    expect(first.style.getPropertyValue('--y3')).toMatch(/vh$/)
+    expect(host.querySelector<HTMLElement>('.bd-dot')!.style.filter).toMatch(/^blur\(/)
     expect(first.style.animationDelay.startsWith('-')).toBe(true)
 
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })

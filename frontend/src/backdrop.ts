@@ -1,6 +1,6 @@
-// Фон окна: обычный или «Частицы» — ночное небо с медленно всплывающими
-// светящимися кругами (по мотивам codepen.io/hf666/pen/WVrpWe). Интерфейс
-// при этом становится чуть прозрачным.
+// Фон окна: обычный или «Частицы» — ночное небо со светлячками: размытые
+// светящиеся круги мерцают и кружат по всему окну (по мотивам
+// codepen.io/hf666/pen/WVrpWe). Интерфейс при этом становится чуть прозрачным.
 //
 // Скорость важнее эффекта: кругов немного, анимируются только transform и
 // opacity, у всех один @keyframes с CSS-переменными, на свёрнутом окне
@@ -39,62 +39,56 @@ export function currentBackdrop(root: HTMLElement = document.documentElement): B
   return root.dataset.backdrop === 'particles' ? 'particles' : 'none'
 }
 
-/** Параметры одного круга: всё случайное, чтобы небо не повторялось. */
+/** Параметры одного светлячка: всё случайное, чтобы небо не повторялось. */
 export interface Particle {
-  size: number // px, 8–34
-  x0: number // vw — откуда всплывает
-  x1: number // vw — куда уплывает
-  y0: number // vh — старт ниже окна
-  y1: number // vh — финиш выше окна
-  duration: number // мс — путь снизу вверх
-  delay: number // мс, отрицательная: круг уже на полпути, а не все стартуют снизу
-  pulse: number // мс — период «дыхания»
+  size: number // px, 10–40
+  path: [number, number][] // 4 точки (vw, vh): светлячок кружит между ними и возвращается
+  duration: number // мс — полный круг по точкам
+  delay: number // мс, отрицательная: с первого кадра светлячки уже в разных местах пути
+  pulse: number // мс — период мерцания
   pulseDelay: number // мс
+  blur: number // px — глубина: дальние мягче, ближние чётче
 }
 
-/** Случайные круги. rnd — для тестов; по умолчанию Math.random. */
+/** Случайные светлячки. rnd — для тестов; по умолчанию Math.random. */
 export function makeParticles(count = PARTICLE_COUNT, rnd: () => number = Math.random): Particle[] {
   const between = (a: number, b: number) => a + (b - a) * rnd()
   return Array.from({ length: count }, () => {
-    const duration = between(26000, 48000)
-    const y0 = between(102, 115)
+    const duration = between(14000, 30000)
+    // Точки — по всему окну, в разные стороны, а не только снизу вверх.
+    const path = Array.from({ length: 4 }, (): [number, number] => [between(-4, 104), between(-4, 104)])
+    const near = rnd() // 0 — далеко, 1 — близко
     return {
-      // Крупнее, чем в оригинале, и чаще мелкие: квадрат случайного числа.
-      size: Math.round(8 + 26 * rnd() ** 2),
-      x0: between(-5, 105),
-      x1: between(-5, 105),
-      y0,
-      y1: -y0 - between(0, 30),
+      size: Math.round(10 + 30 * near ** 2),
+      path,
       duration,
       delay: -between(0, duration),
-      pulse: between(2400, 6000),
-      pulseDelay: -between(0, 6000),
+      pulse: between(1600, 4000),
+      pulseDelay: -between(0, 4000),
+      blur: Math.round((1.5 + 5.5 * (1 - near)) * 10) / 10,
     }
   })
 }
 
-/** Рисует круги в host; возвращает функцию, которая всё убирает. */
+/** Рисует светлячков в host; возвращает функцию, которая всё убирает. */
 export function mountParticles(host: HTMLElement, particles: Particle[] = makeParticles()): () => void {
-  const reduced = matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  // «Уменьшение движения» в Windows здесь не учитываем: фон человек включил сам,
+  // а в удалённом рабочем столе и на офисных ПК анимации Windows часто выключены.
   const frag = document.createDocumentFragment()
   for (const p of particles) {
     const wrap = document.createElement('span')
     wrap.className = 'bd-particle'
     const s = wrap.style
     s.width = s.height = `${p.size}px`
-    if (reduced) {
-      // Без движения: круги просто стоят в случайных местах.
-      s.transform = `translate3d(${p.x0}vw, ${(p.y0 - 102) * 7}vh, 0)`
-    } else {
-      s.setProperty('--x0', `${p.x0}vw`)
-      s.setProperty('--x1', `${p.x1}vw`)
-      s.setProperty('--y0', `${p.y0}vh`)
-      s.setProperty('--y1', `${p.y1}vh`)
-      s.animationDuration = `${Math.round(p.duration)}ms`
-      s.animationDelay = `${Math.round(p.delay)}ms`
-    }
+    p.path.forEach(([x, y], i) => {
+      s.setProperty(`--x${i}`, `${x.toFixed(1)}vw`)
+      s.setProperty(`--y${i}`, `${y.toFixed(1)}vh`)
+    })
+    s.animationDuration = `${Math.round(p.duration)}ms`
+    s.animationDelay = `${Math.round(p.delay)}ms`
     const dot = document.createElement('span')
     dot.className = 'bd-dot'
+    dot.style.filter = `blur(${p.blur}px)`
     dot.style.animationDuration = `${Math.round(p.pulse)}ms`
     dot.style.animationDelay = `${Math.round(p.pulseDelay)}ms`
     wrap.append(dot)
