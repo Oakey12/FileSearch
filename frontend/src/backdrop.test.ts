@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BACKDROP_KEY, FIREFLY_COUNT, PARTICLE_COUNT, applyBackdrop, currentBackdrop, loadBackdrop, makeFireflies, makeForest, makeParticles, mountForest, mountParticles, saveBackdrop, watchSmoothness } from './backdrop'
+import { BACKDROP_KEY, FIREFLY_COUNT, PARTICLE_COUNT, applyBackdrop, currentBackdrop, loadBackdrop, makeFireflies, makeParticles, mountForest, mountParticles, saveBackdrop, watchSmoothness } from './backdrop'
 
 function memoryStore() {
   const data = new Map<string, string>()
@@ -51,10 +51,11 @@ describe('частицы', () => {
     const ps = makeParticles(400, seeded(7))
     expect(ps).toHaveLength(400)
     for (const p of ps) {
-      expect(p.size).toBeGreaterThanOrEqual(10)
-      expect(p.size).toBeLessThanOrEqual(40)
-      expect(p.blur).toBeGreaterThanOrEqual(1.5)
-      expect(p.blur).toBeLessThanOrEqual(7)
+      expect(p.size).toBeGreaterThanOrEqual(18)
+      expect(p.size).toBeLessThanOrEqual(58)
+      expect(p.blur).toBeGreaterThanOrEqual(3)
+      expect(p.blur).toBeLessThanOrEqual(9)
+      expect(p.duration).toBeGreaterThanOrEqual(45000) // медленно
       expect(p.path).toHaveLength(4)
       // Отрицательная задержка: с первого кадра светлячок уже в пути.
       expect(p.delay).toBeLessThanOrEqual(0)
@@ -157,25 +158,15 @@ describe('лес', () => {
     expect(new Set(flies.map((f) => Math.round(f.flashDelay / 500))).size).toBeGreaterThan(10)
   })
 
-  it('лес — корректный SVG из трёх слоёв деревьев', () => {
-    const svg = new DOMParser().parseFromString(makeForest(seeded(5)), 'image/svg+xml')
-    expect(svg.querySelector('parsererror')).toBeNull()
-    expect(svg.querySelectorAll('g.far path').length).toBeGreaterThan(20)
-    expect(svg.querySelectorAll('g.mid path').length).toBeGreaterThan(10)
-    expect(svg.querySelectorAll('g.near path').length).toBeGreaterThan(5)
-  })
-
   it('рисуется и убирается без следа', () => {
     const scene = document.createElement('div')
-    const forest = document.createElement('div')
     const host = document.createElement('div')
-    const stop = mountForest(scene, forest, host, makeFireflies(FIREFLY_COUNT, seeded(2)))
-    expect(forest.querySelector('svg')).not.toBeNull()
+    const stop = mountForest(scene, host, makeFireflies(FIREFLY_COUNT, seeded(2)))
     expect(host.querySelectorAll('.ff')).toHaveLength(FIREFLY_COUNT)
+    expect(host.querySelector<HTMLElement>('.ff-light')!.style.filter).toMatch(/^blur/)
     expect(host.querySelectorAll('.ff-light')).toHaveLength(FIREFLY_COUNT)
     expect(host.querySelector<HTMLElement>('.ff')!.style.getPropertyValue('--x7')).toMatch(/vw$/)
     stop()
-    expect(forest.childElementCount).toBe(0)
     expect(host.childElementCount).toBe(0)
   })
 })

@@ -761,7 +761,7 @@ svg { flex: none; }
 
 @media (prefers-reduced-motion: reduce) {
   /* Кроме фона «Частицы»: его включают сами, и он должен двигаться. */
-  *:not(.bd-particle, .bd-dot, .bd-blob, .ff, .ff-orbit, .ff-light, .bd-fog), *::before, *::after { animation: none !important; transition: none !important; }
+  *:not(.bd-particle, .bd-dot, .bd-blob, .ff, .ff-orbit, .ff-light), *::before, *::after { animation: none !important; transition: none !important; }
 }
 
 /* === Режим поиска: имя или текст ======================================= */
@@ -1764,7 +1764,8 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
   color: var(--text-2);
 }
 .theme-btn svg { width: 16px; height: 16px; }
-.theme-btn:hover { background: var(--raised-hover); color: var(--text); }
+.theme-btn:hover:not(:disabled) { background: var(--raised-hover); color: var(--text); }
+.theme-btn:disabled { opacity: 0.4; cursor: default; }
 .theme-btn:focus-visible { outline-offset: 2px; }
 
 /* === Светлая тема: то, что не выразить одними токенами =================== */
@@ -1864,8 +1865,8 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 }
 /* Мерцание: разгорается и гаснет. */
 @keyframes bd-pulse {
-  0%, 100% { transform: scale(0.55); opacity: 0.35; }
-  50% { transform: scale(1.9); opacity: 1; }
+  0%, 100% { transform: scale(0.6); opacity: 0.3; }
+  50% { transform: scale(2.3); opacity: 0.95; }
 }
 
 /* Интерфейс поверх неба — чуть прозрачный. Бумага с текстом и кодом остаётся
@@ -1873,36 +1874,46 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 :root[data-backdrop="particles"] {
   background: #040817;
   --sidebar: rgba(6, 9, 18, 0.8);
-  --raised: rgba(30, 33, 44, 0.94);
-  --raised-hover: rgba(42, 46, 60, 0.96);
+  --raised: rgba(30, 33, 44, 0.9);
+  --raised-hover: rgba(42, 46, 60, 0.94);
   --hair: rgba(255, 255, 255, 0.07);
-  --main-tint: rgba(4, 7, 16, 0.8);
-  --glass: rgba(12, 14, 28, 0.4); /* стекло: боковая панель и строка поиска */
-  --glass-blur: blur(22px) saturate(170%);
+  --card: rgba(7, 10, 22, 0.8); /* карточки списка и предпросмотра: прозрачность 20 % */
+  --card-edge: rgba(255, 255, 255, 0.06);
+  --card-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  --glass: rgba(10, 13, 28, 0.45); /* стекло боковой панели */
+  --glass-blur: blur(24px) saturate(160%);
 }
 :root[data-backdrop] body { background: transparent; }
 
-/* Как в macOS: боковая панель и строка поиска — матовое стекло, сквозь которое
-   видны сияние и светлячки; список, предпросмотр и декодер — плотнее, ради текста.
-   Размытие только на узких полосах, поэтому дёшево. */
-:root[data-backdrop] .sidebar,
-:root[data-backdrop] .toolbar,
-:root[data-backdrop] .scopebar {
+/* Поверх фона — без резких тёмных блоков: боковая панель — матовое стекло во всю
+   высоту, строка поиска и строка состояния лежат прямо на фоне, список и
+   предпросмотр — мягкие скруглённые карточки с отступами, как в macOS. */
+:root[data-backdrop] .sidebar {
+  border-right: 0;
   background: var(--glass);
+  box-shadow: inset -1px 0 0 var(--hair);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
 }
-:root.bd-lite[data-backdrop] .sidebar,
-:root.bd-lite[data-backdrop] .toolbar,
-:root.bd-lite[data-backdrop] .scopebar {
+:root.bd-lite[data-backdrop] .sidebar {
   /* Слабая видеокарта: без размытия, только тонировка (см. watchSmoothness). */
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  background: var(--sidebar);
+  background: var(--card);
 }
+:root[data-backdrop] .statusbar { border-top: 0; }
 :root[data-backdrop] .results,
-:root[data-backdrop] .statusbar,
-:root[data-backdrop] .decoder { background: var(--main-tint); }
+:root[data-backdrop] .inspector,
+:root[data-backdrop] .decoder-body {
+  border: 1px solid var(--card-edge);
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+:root[data-backdrop] .results { margin: 0 12px; }
+:root[data-backdrop] .inspector { margin: 12px 12px 12px 0; }
+:root[data-backdrop] .decoder-nav { background: transparent; }
 
 :root[data-theme="light"][data-backdrop="particles"] {
   background: #e4ebf7;
@@ -1911,7 +1922,9 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
   --raised: rgba(255, 255, 255, 0.9);
   --raised-hover: rgba(255, 255, 255, 0.96);
   --hair: rgba(20, 40, 80, 0.1);
-  --main-tint: rgba(251, 252, 255, 0.8);
+  --card: rgba(252, 253, 255, 0.8);
+  --card-edge: rgba(255, 255, 255, 0.7);
+  --card-shadow: 0 18px 50px rgba(40, 60, 110, 0.14);
   --glass: rgba(255, 255, 255, 0.42);
 }
 :root[data-theme="light"] .backdrop { --bd-glow: hsl(212 85% 62% / 0.55); }
@@ -1924,70 +1937,29 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 }
 
 /* === Фон окна «Лес» ==================================================== */
-/* Туманный ночной лес (SVG собирается один раз, неподвижен) и светлячки:
+/* Тёмная лесная ночь и размытые светлячки (по мотивам codepen.io/mikegolus/pen/Jegvym):
    каждый медленно летит по своим восьми точкам, кружит петлями и время от
    времени вспыхивает. Анимируются только transform и opacity. */
 
 :root[data-backdrop="forest"] {
-  background: #071314;
-  --forest-light: #5f8f80;
-  --forest-dark: #050d0e;
-  --forest-haze: #6f9c8e;
-  --tree-far: #2c4a46;
-  --tree-mid: #142624;
-  --tree-near: #060d0e;
+  background: #040a09;
   --ff-color: 255 222 89;
-  /* Интерфейс прозрачен на 20 %. */
-  --sidebar: rgba(5, 12, 13, 0.8);
-  --raised: rgba(26, 38, 38, 0.92);
-  --raised-hover: rgba(38, 52, 52, 0.95);
+  --sidebar: rgba(4, 10, 9, 0.8);
+  --raised: rgba(24, 34, 32, 0.9);
+  --raised-hover: rgba(36, 48, 45, 0.94);
   --hair: rgba(255, 255, 255, 0.07);
-  --main-tint: rgba(5, 12, 13, 0.8);
-  --glass: rgba(8, 20, 20, 0.4);
-  --glass-blur: blur(22px) saturate(150%);
+  --card: rgba(4, 10, 9, 0.8);
+  --card-edge: rgba(255, 255, 255, 0.06);
+  --card-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+  --glass: rgba(6, 14, 12, 0.45);
+  --glass-blur: blur(24px) saturate(150%);
 }
-:root[data-theme="light"][data-backdrop="forest"] {
-  background: #dee7e2;
-  --forest-light: #f2f6f1;
-  --forest-dark: #b9cbc3;
-  --forest-haze: #eef3ee;
-  --tree-far: #a9bdb5;
-  --tree-mid: #7d958c;
-  --tree-near: #4c6159;
-  --ff-color: 230 170 20;
-  --sidebar: rgba(246, 249, 247, 0.8);
-  --raised: rgba(255, 255, 255, 0.9);
-  --raised-hover: rgba(255, 255, 255, 0.96);
-  --hair: rgba(20, 50, 40, 0.1);
-  --main-tint: rgba(250, 252, 251, 0.8);
-  --glass: rgba(255, 255, 255, 0.4);
-}
-
-.bd-forest, .bd-forest svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-/* Лес неподвижен: свой слой композитора — под туманом и светлячками он не перерисовывается. */
-.bd-forest { will-change: transform; contain: strict; }
-.bd-scene { contain: strict; }
-.bd-forest .far { fill: var(--tree-far); stroke: var(--tree-far); }
-.bd-forest .mid { fill: var(--tree-mid); stroke: var(--tree-mid); }
-.bd-forest .near { fill: var(--tree-near); stroke: var(--tree-near); }
-.bd-forest .br { fill: none; stroke-linecap: round; }
-
-/* Туман медленно стелется по низу. */
-.bd-fog {
-  position: absolute;
-  left: -30%;
-  right: -30%;
-  bottom: -10%;
-  height: 60%;
+.bd-scene-forest {
   background:
-    radial-gradient(40% 50% at 30% 70%, color-mix(in srgb, var(--forest-haze) 35%, transparent), transparent 70%),
-    radial-gradient(35% 45% at 75% 60%, color-mix(in srgb, var(--forest-haze) 28%, transparent), transparent 70%);
-  animation: bd-fog 70s ease-in-out infinite alternate;
-  will-change: transform;
-}
-@keyframes bd-fog {
-  from { transform: translate3d(-8%, 0, 0); }
-  to { transform: translate3d(8%, -3%, 0); }
+    radial-gradient(70% 60% at 50% 35%, rgba(52, 96, 78, 0.55), transparent 70%),
+    radial-gradient(50% 40% at 15% 90%, rgba(34, 70, 54, 0.5), transparent 70%),
+    radial-gradient(45% 40% at 88% 75%, rgba(40, 74, 58, 0.4), transparent 70%),
+    #040a09;
 }
 
 .bd-fireflies { position: absolute; inset: 0; }
@@ -2010,12 +1982,11 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
   margin: -50% 0 0 -50%;
   border-radius: 50%;
   background: radial-gradient(rgb(255 252 220) 0 6%, rgb(var(--ff-color) / 0.9) 12%, rgb(var(--ff-color) / 0.35) 32%, transparent 66%);
-  opacity: 0.06;
+  opacity: 0.3;
   animation: ff-flash ease-in-out infinite;
   will-change: transform, opacity;
 }
-.bd-paused .ff, .bd-paused .ff-orbit, .bd-paused .ff-light, .bd-paused .bd-fog,
-.bd-scene-forest.bd-paused .bd-fog { animation-play-state: paused; }
+.bd-paused .ff, .bd-paused .ff-orbit, .bd-paused .ff-light { animation-play-state: paused; }
 
 @keyframes ff-roam {
   0% { transform: translate3d(var(--x0), var(--y0), 0); }
@@ -2033,8 +2004,8 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 }
 /* Как в оригинале: короткая вспышка и долгая темнота. */
 @keyframes ff-flash {
-  0%, 30%, 100% { opacity: 0.06; transform: scale(0.5); }
-  5% { opacity: 1; transform: scale(1); }
+  0%, 40%, 100% { opacity: 0.3; transform: scale(0.6); }
+  10% { opacity: 1; transform: scale(1.15); }
 }
 
 /* --- Кнопка и выбор фона ------------------------------------------------ */
@@ -2104,9 +2075,7 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 .bd-swatch-particles i:nth-child(4) { left: 82%; top: 18%; transform: scale(0.8); }
 .bd-swatch-particles i:nth-child(5) { left: 28%; top: 82%; transform: scale(0.9); }
 .bd-swatch-forest {
-  background:
-    linear-gradient(90deg, transparent 0 14%, #0a1716 14% 20%, transparent 20% 46%, #102321 46% 50%, transparent 50% 74%, #08110f 74% 82%, transparent 82%),
-    radial-gradient(80% 70% at 50% 30%, #5f8f80, #071314 75%);
+  background: radial-gradient(80% 70% at 50% 35%, rgba(46, 84, 70, 0.8), #040a09 80%);
 }
 .bd-swatch-forest i {
   position: absolute;
