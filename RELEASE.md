@@ -25,23 +25,35 @@ P:\FileSearch  ──(FileSearchReleaseTool.exe)──►  C:\Users\1108\nginx-1
 ## Сборка (Wails)
 
 С версии 2.0 интерфейс сделан на [Wails](https://wails.io): логика на Go, окно — WebView2.
-Обычный `go build` здесь не подходит, собирать нужно через `wails build`: он собирает
-фронтенд (`frontend/`) и встраивает его в exe.
+Обычный `go build` здесь не подходит, собирать нужно через `wails build`: он встраивает
+интерфейс из `frontend/dist` в exe.
 
-На машине сборки нужны Go 1.25+, Node.js 20+ и Wails CLI:
+Готовый интерфейс (`frontend/dist`) хранится в репозитории, поэтому серверу выпуска
+**не нужны ни Node.js, ни интернет** — только Go 1.25+ и Wails CLI:
 
 ```powershell
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
-wails doctor
 ```
 
 Собрать и опубликовать одной командой:
 
 ```powershell
-.\tools\release.ps1 -Version 2.0.0 -Notes "Новый интерфейс"
+powershell -ExecutionPolicy Bypass -File .\tools\release.ps1 -Version 2.0.0 -Notes "Новый интерфейс"
 ```
 
-Для разработки: `wails dev` — окно с горячей перезагрузкой интерфейса.
+### Изменения интерфейса
+
+Интерфейс правят на машине разработчика, где есть Node.js и доступ к npm. После правок
+в `frontend/src` пересоберите его и закоммитьте вместе с `frontend/dist`:
+
+```powershell
+cd frontend
+npm install
+npm run build
+```
+
+`wails dev` (окно с горячей перезагрузкой) и `wails build` тоже обновляют `frontend/dist`.
+На машине с доступом к npm `release.ps1` можно запускать с ключом `-BuildFrontend`.
 
 Программа работает на Windows 10 и 11. Если на компьютере нет WebView2 (на Windows 11 он
 встроен), при первом запуске программа предложит его установить.
