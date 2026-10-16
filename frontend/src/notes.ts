@@ -43,6 +43,11 @@ function lines(text: string): string[] {
 export const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 
 export class Notes {
+  /** Заметки изменились — холст обновит карточки-заметки. */
+  onChange: (() => void) | null = null
+  /** Нажата «На холст». */
+  onToBoard: ((id: string) => void) | null = null
+
   private notes: Note[] = []
   private currentId: string | null = null
   private filter = ''
@@ -54,10 +59,14 @@ export class Notes {
   private date = byId<HTMLTimeElement>('noteDate')
   private search = byId<HTMLInputElement>('notesSearch')
   private deleteButton = byId<HTMLButtonElement>('noteDelete')
+  private boardButton = byId<HTMLButtonElement>('noteToBoard')
 
   constructor() {
     byId('notesNew').addEventListener('click', () => this.create())
     this.deleteButton.addEventListener('click', () => this.remove())
+    this.boardButton.addEventListener('click', () => {
+      if (this.currentId) this.onToBoard?.(this.currentId)
+    })
     this.search.addEventListener('input', () => {
       this.filter = normalize(this.search.value.trim())
       this.renderList()
@@ -83,6 +92,26 @@ export class Notes {
       this.select(this.notes[0]?.id ?? null)
     }
     this.renderList()
+  }
+
+  /** Заголовок и текст заметки для карточки на холсте. */
+  get(id: string): { title: string; body: string } | null {
+    const note = this.notes.find((n) => n.id === id)
+    if (!note) return null
+    const [title, ...rest] = note.text.split('\n')
+    return { title: title.trim() || 'Новая заметка', body: rest.join('\n').trim() }
+  }
+
+  all(): { id: string; title: string; updated: number }[] {
+    return this.notes.map((n) => ({ id: n.id, title: this.get(n.id)!.title, updated: n.updated }))
+  }
+
+  /** Открывает заметку в редакторе (из холста). */
+  async show(id: string): Promise<void> {
+    await this.open()
+    this.search.value = ''
+    this.filter = ''
+    this.select(id, true)
   }
 
   focusSearch(): void {
@@ -125,6 +154,7 @@ export class Notes {
     this.editor.textContent = note?.text ?? ''
     this.date.textContent = note ? `${longDate.format(note.updated)} в ${timeFormat.format(note.updated)}` : ''
     this.deleteButton.disabled = !note
+    this.boardButton.disabled = !note
     this.renderList()
     if (focusEditor) {
       this.editor.focus()
@@ -149,6 +179,7 @@ export class Notes {
       this.notes.unshift(note)
       this.currentId = note.id
       this.deleteButton.disabled = false
+      this.boardButton.disabled = false
     }
     note.text = text
     note.updated = Date.now()
@@ -156,6 +187,7 @@ export class Notes {
     this.sort()
     this.renderList()
     this.scheduleSave()
+    this.onChange?.()
   }
 
   private remove(): void {
@@ -166,10 +198,12 @@ export class Notes {
     const next = this.notes[Math.min(index, this.notes.length - 1)]
     this.select(next?.id ?? null)
     this.scheduleSave()
+    this.onChange?.()
     toast('Заметка удалена', 'Отменить', () => {
       this.notes.splice(index, 0, note)
       this.select(note.id)
       this.scheduleSave()
+      this.onChange?.()
     })
   }
 

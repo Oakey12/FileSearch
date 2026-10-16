@@ -1,6 +1,7 @@
-// Шторка сверху: «Заметки» и «Холст». Открывается кнопкой, Ctrl+J или
-// если потянуть язычок у верхнего края окна; закрывается Esc, щелчком мимо
-// или если потянуть ручку внизу шторки вверх.
+// Шторка сверху: «Заметки» и «Холст».
+// Открыть — кнопка, Ctrl+J или язычок у верхнего края окна (можно потянуть вниз).
+// Нижняя ручка меняет высоту; двойной щелчок по ней или кнопка ⤢ разворачивают
+// шторку на всё окно. Если стянуть шторку совсем низко — она закроется.
 
 import { Board } from './board'
 import type { FileItem } from './list'
@@ -11,6 +12,18 @@ type Pane = 'notes' | 'board'
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
+const MIN_HEIGHT = 320
+const CLOSE_BELOW = 200 // отпустили ниже — закрыть
+
+const store = {
+  get(key: string): string | null {
+    try { return localStorage.getItem(key) } catch { return null }
+  },
+  set(key: string, value: string): void {
+    try { localStorage.setItem(key, value) } catch { /* без хранилища — по умолчанию */ }
+  },
+}
+
 export class Drawer {
   readonly notes = new Notes()
   readonly board = new Board()
@@ -19,21 +32,25 @@ export class Drawer {
   private scrim = byId<HTMLDivElement>('drawerScrim')
   private tab = byId<HTMLButtonElement>('drawerTab')
   private grip = byId<HTMLDivElement>('drawerGrip')
+  private maxButton = byId<HTMLButtonElement>('drawerMax')
   private notesPane = byId<HTMLDivElement>('notesPane')
   private boardPane = byId<HTMLDivElement>('boardPane')
-  private pane: Pane = 'notes'
+  private pane: Pane = store.get('drawerPane') === 'board' ? 'board' : 'notes'
+  private maximized = store.get('drawerMax') === '1'
+  private height = Number(store.get('drawerHeight')) || 0
   private returnFocus: HTMLElement | null = null
   isOpen = false
 
   constructor() {
     byId('openNotes').addEventListener('click', () => this.toggle())
     byId('drawerClose').addEventListener('click', () => this.close())
+    this.maxButton.addEventListener('click', () => this.setMaximized(!this.maximized))
     this.scrim.addEventListener('click', () => this.close())
     this.el.querySelectorAll<HTMLButtonElement>('[data-pane]').forEach((b) => {
       b.addEventListener('click', () => this.show(b.dataset.pane as Pane))
     })
-    this.pullGesture(this.tab, 1)
-    this.pullGesture(this.grip, -1)
+    this.pullToOpen()
+    this.gripResize()
     this.el.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return
       e.stopPropagation()
@@ -44,9 +61,23 @@ export class Drawer {
       this.notes.flush()
       this.board.flush()
     })
-    try {
-      if (localStorage.getItem('drawerPane') === 'board') this.pane = 'board'
-    } catch { /* без хранилища — по умолчанию заметки */ }
+    window.addEventListener('resize', () => this.applySize())
+
+    // Холст показывает заметки и открывает их; заметки отправляют себя на холст.
+    this.board.notes = {
+      get: (id) => this.notes.get(id),
+      list: () => this.notes.all(),
+      open: (id) => {
+        this.show('notes')
+        void this.notes.show(id)
+      },
+    }
+    this.notes.onChange = () => this.board.refreshNoteCards()
+    this.notes.onToBoard = (id) => {
+      this.show('board')
+      void this.board.addNote(id)
+    }
+    this.applySize()
   }
 
   toggle(): void {
@@ -77,7 +108,6 @@ export class Drawer {
     this.el.style.transform = ''
     this.el.setAttribute('aria-hidden', 'true')
     this.el.inert = true
-    // Подложку убираем после анимации, чтобы она плавно погасла.
     window.setTimeout(() => { if (!this.isOpen) this.scrim.hidden = true }, 320)
     this.returnFocus?.focus?.()
   }
@@ -91,33 +121,99 @@ export class Drawer {
 
   private show(pane: Pane): void {
     this.pane = pane
-    try { localStorage.setItem('drawerPane', pane) } catch { /* не страшно */ }
+    store.set('drawerPane', pane)
     this.el.querySelectorAll<HTMLButtonElement>('[data-pane]').forEach((b) => {
       b.setAttribute('aria-selected', String(b.dataset.pane === pane))
     })
     this.notesPane.hidden = pane !== 'notes'
     this.boardPane.hidden = pane !== 'board'
     if (!this.isOpen) return
-    if (pane === 'notes') void this.notes.open().then(() => this.notes.focusEditor())
-    else void this.board.open().then(() => this.board.focus())
+    if (pane === 'notes') {
+      void this.notes.open().then(() => this.notes.focusEditor())
+    } else {
+      // Заметки нужны холсту, чтобы показать текст карточек-заметок.
+      void this.notes.open().then(() => this.board.open()).then(() => {
+        this.board.refreshNoteCards()
+        this.board.focus()
+      })
+    }
   }
 
-  /**
-   * Шторка следует за указателем, пока её тянут. direction: 1 — тянут вниз
-   * (открыть), -1 — тянут вверх (закрыть). Короткий щелчок без движения
-   * по язычку просто открывает шторку.
-   */
-  private pullGesture(handle: HTMLElement, direction: 1 | -1): void {
-    handle.addEventListener('pointerdown', (start) => {
+  // --- Размер шторки ----------------------------------------------------
+
+  private setMaximized(on: boolean): void {
+    this.maximized = on
+    store.set('drawerMax', on ? '1' : '0')
+    this.applySize()
+  }
+
+  private applySize(): void {
+    this.el.classList.toggle('maximized', this.maximized)
+    this.maxButton.setAttribute('aria-pressed', String(this.maximized))
+    this.maxButton.title = this.maximized ? 'Свернуть шторку' : 'Развернуть на всё окно'
+    this.maxButton.querySelector('use')?.setAttribute('href', this.maximized ? '#i-collapse' : '#i-expand')
+    if (this.maximized || !this.height) {
+      this.el.style.height = ''
+    } else {
+      this.el.style.height = `${Math.min(window.innerHeight, Math.max(MIN_HEIGHT, this.height))}px`
+    }
+  }
+
+  /** Нижняя ручка: тянуть — высота, отпустить совсем низко — закрыть, двойной щелчок — на всё окно. */
+  private gripResize(): void {
+    this.grip.addEventListener('dblclick', () => this.setMaximized(!this.maximized))
+    this.grip.addEventListener('pointerdown', (start) => {
       if (start.button !== 0) return
       start.preventDefault()
-      handle.setPointerCapture(start.pointerId)
-      const height = this.el.offsetHeight
-      let offset = 0
+      try { this.grip.setPointerCapture(start.pointerId) } catch { /* синтетические события */ }
+      const top = this.el.getBoundingClientRect().top
+      let last = start.clientY
       let moved = false
+      const move = (e: PointerEvent) => {
+        last = e.clientY
+        if (!moved && Math.abs(last - start.clientY) < 4) return
+        moved = true
+        this.el.classList.add('dragging')
+        this.el.classList.remove('maximized')
+        const h = Math.min(window.innerHeight, last - top + 9)
+        this.el.style.height = `${Math.max(CLOSE_BELOW - 40, h)}px`
+        this.el.style.opacity = h < CLOSE_BELOW ? '0.6' : ''
+      }
+      const up = () => {
+        this.grip.removeEventListener('pointermove', move)
+        this.grip.removeEventListener('pointerup', up)
+        this.grip.removeEventListener('pointercancel', up)
+        this.el.classList.remove('dragging')
+        this.el.style.opacity = ''
+        if (!moved) return
+        const h = last - top + 9
+        if (h < CLOSE_BELOW) {
+          this.applySize() // вернуть прежний размер к следующему открытию
+          this.close()
+          return
+        }
+        this.height = Math.round(Math.min(window.innerHeight, h))
+        store.set('drawerHeight', String(this.height))
+        this.maximized = this.height >= window.innerHeight - 8
+        store.set('drawerMax', this.maximized ? '1' : '0')
+        this.applySize()
+      }
+      this.grip.addEventListener('pointermove', move)
+      this.grip.addEventListener('pointerup', up)
+      this.grip.addEventListener('pointercancel', up)
+    })
+  }
 
-      if (direction === 1 && !this.isOpen) {
-        // Готовим шторку к выезду: видна, но пока за верхним краем.
+  /** Язычок у верхнего края: щелчок — открыть, потянуть вниз — шторка выезжает за курсором. */
+  private pullToOpen(): void {
+    this.tab.addEventListener('pointerdown', (start) => {
+      if (start.button !== 0) return
+      start.preventDefault()
+      try { this.tab.setPointerCapture(start.pointerId) } catch { /* синтетические события */ }
+      const height = this.el.offsetHeight
+      let offset = -height
+      let moved = false
+      if (!this.isOpen) {
         this.el.inert = false
         this.scrim.hidden = false
       }
@@ -126,29 +222,25 @@ export class Drawer {
         if (Math.abs(dy) > 4) moved = true
         if (!moved) return
         this.el.classList.add('dragging')
-        offset = direction === 1 ? Math.min(0, -height + Math.max(0, dy)) : Math.min(0, dy)
+        offset = Math.min(0, -height + Math.max(0, dy))
         this.el.style.transform = `translateY(${offset}px)`
-        this.scrim.style.opacity = String(1 - Math.abs(offset) / height)
+        this.scrim.style.opacity = String(1 + offset / height)
       }
       const up = () => {
-        handle.removeEventListener('pointermove', move)
-        handle.removeEventListener('pointerup', up)
-        handle.removeEventListener('pointercancel', up)
+        this.tab.removeEventListener('pointermove', move)
+        this.tab.removeEventListener('pointerup', up)
+        this.tab.removeEventListener('pointercancel', up)
         this.el.classList.remove('dragging')
         this.scrim.style.opacity = ''
-        const shown = height + offset // сколько шторки видно
-        if (direction === 1) {
-          if (!moved || shown > height * 0.25) this.open()
-          else {
-            this.el.style.transform = ''
-            if (!this.isOpen) { this.el.inert = true; this.scrim.hidden = true }
-          }
-        } else if (moved && -offset > Math.min(120, height * 0.2)) this.close()
-        else this.el.style.transform = ''
+        if (!moved || height + offset > height * 0.25) this.open()
+        else {
+          this.el.style.transform = ''
+          if (!this.isOpen) { this.el.inert = true; this.scrim.hidden = true }
+        }
       }
-      handle.addEventListener('pointermove', move)
-      handle.addEventListener('pointerup', up)
-      handle.addEventListener('pointercancel', up)
+      this.tab.addEventListener('pointermove', move)
+      this.tab.addEventListener('pointerup', up)
+      this.tab.addEventListener('pointercancel', up)
     })
   }
 }
