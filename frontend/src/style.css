@@ -760,7 +760,8 @@ svg { flex: none; }
 .toast[hidden] { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
+  /* Кроме фона «Частицы»: его включают сами, и он должен двигаться. */
+  *:not(.bd-particle, .bd-dot), *::before, *::after { animation: none !important; transition: none !important; }
 }
 
 /* === Режим поиска: имя или текст ======================================= */
@@ -1816,48 +1817,55 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
   top: 0;
   left: 0;
   transform: translate3d(var(--x0), var(--y0), 0);
-  animation: bd-rise linear infinite;
+  animation: bd-wander cubic-bezier(0.45, 0, 0.55, 1) infinite;
   will-change: transform;
 }
+/* Размытие задаётся каждому кругу один раз (filter в style) и не анимируется —
+   двигаются только transform и opacity, поэтому дёшево. */
 .bd-dot {
   display: block;
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  background: radial-gradient(var(--bd-glow), var(--bd-glow) 10%, transparent 56%);
+  background: radial-gradient(var(--bd-glow), var(--bd-glow) 18%, transparent 62%);
   animation: bd-pulse ease-in-out infinite;
+  will-change: transform, opacity;
 }
 .bd-paused .bd-particle, .bd-paused .bd-dot { animation-play-state: paused; }
 
-@keyframes bd-rise {
-  from { transform: translate3d(var(--x0), var(--y0), 0); }
-  to { transform: translate3d(var(--x1), var(--y1), 0); }
+/* Светлячок кружит по четырём случайным точкам и возвращается. */
+@keyframes bd-wander {
+  0%, 100% { transform: translate3d(var(--x0), var(--y0), 0); }
+  25% { transform: translate3d(var(--x1), var(--y1), 0); }
+  50% { transform: translate3d(var(--x2), var(--y2), 0); }
+  75% { transform: translate3d(var(--x3), var(--y3), 0); }
 }
+/* Мерцание: разгорается и гаснет. */
 @keyframes bd-pulse {
-  0%, 100% { transform: scale(0.4); opacity: 0.95; }
-  50% { transform: scale(2.4); opacity: 0.6; }
+  0%, 100% { transform: scale(0.55); opacity: 0.35; }
+  50% { transform: scale(1.9); opacity: 1; }
 }
 
 /* Интерфейс поверх неба — чуть прозрачный. Бумага с текстом и кодом остаётся
    непрозрачной: читаемость важнее. */
 :root[data-backdrop="particles"] {
   background: #021027;
-  --sidebar: rgba(10, 16, 32, 0.66);
-  --raised: rgba(46, 52, 68, 0.78);
-  --raised-hover: rgba(58, 64, 82, 0.86);
+  --sidebar: rgba(12, 18, 34, 0.84);
+  --raised: rgba(46, 52, 68, 0.9);
+  --raised-hover: rgba(58, 64, 82, 0.94);
   --hair: rgba(255, 255, 255, 0.08);
-  --main-tint: rgba(8, 14, 30, 0.42);
+  --main-tint: rgba(10, 16, 32, 0.72);
 }
 :root[data-backdrop="particles"] body { background: transparent; }
 :root[data-backdrop="particles"] .main { background: var(--main-tint); }
 
 :root[data-theme="light"][data-backdrop="particles"] {
   background: #dfe8f6;
-  --sidebar: rgba(247, 249, 253, 0.7);
-  --raised: rgba(255, 255, 255, 0.78);
-  --raised-hover: rgba(255, 255, 255, 0.92);
+  --sidebar: rgba(247, 249, 253, 0.86);
+  --raised: rgba(255, 255, 255, 0.9);
+  --raised-hover: rgba(255, 255, 255, 0.96);
   --hair: rgba(20, 40, 80, 0.1);
-  --main-tint: rgba(251, 252, 255, 0.55);
+  --main-tint: rgba(251, 252, 255, 0.78);
 }
 :root[data-theme="light"] .backdrop { --bd-glow: hsl(212 85% 62% / 0.55); }
 :root[data-theme="light"] .bd-sky { background: none; }
