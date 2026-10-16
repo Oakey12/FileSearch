@@ -1850,11 +1850,11 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
    непрозрачной: читаемость важнее. */
 :root[data-backdrop="particles"] {
   background: #021027;
-  --sidebar: rgba(12, 18, 34, 0.84);
-  --raised: rgba(46, 52, 68, 0.9);
-  --raised-hover: rgba(58, 64, 82, 0.94);
-  --hair: rgba(255, 255, 255, 0.08);
-  --main-tint: rgba(10, 16, 32, 0.72);
+  --sidebar: rgba(6, 9, 18, 0.88);
+  --raised: rgba(30, 33, 44, 0.94);
+  --raised-hover: rgba(42, 46, 60, 0.96);
+  --hair: rgba(255, 255, 255, 0.07);
+  --main-tint: rgba(4, 7, 16, 0.8);
 }
 :root[data-backdrop="particles"] body { background: transparent; }
 :root[data-backdrop="particles"] .main { background: var(--main-tint); }
