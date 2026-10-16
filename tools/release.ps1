@@ -7,16 +7,20 @@ $ErrorActionPreference = "Stop"
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Версия должна быть вида 1.2.3" }
 
 $root    = Split-Path -Parent $PSScriptRoot
-$dist    = Join-Path $root "dist"
 $exeName = "file-search-$Version.exe"
-$exe     = Join-Path $dist $exeName
-New-Item -ItemType Directory -Force $dist | Out-Null
+$exe     = Join-Path $root "build\bin\$exeName"
+$wails   = (Get-Command wails -ErrorAction SilentlyContinue).Source
+if (-not $wails) { $wails = Join-Path (go env GOPATH) "bin\wails.exe" }
+if (-not (Test-Path $wails)) { throw "Не найден wails. Установите: go install github.com/wailsapp/wails/v2/cmd/wails@latest" }
 
 Push-Location $root
 try {
     go test ./...
     if ($LASTEXITCODE) { throw "Тесты не прошли" }
-    go build -trimpath -ldflags "-s -w -H windowsgui -X file-search/internal/update.CurrentVersion=$Version" -o $exe .
+    # wails build собирает фронтенд и встраивает его в exe.
+    # -webview2 embed: если на ПК нет WebView2, программа предложит его установить.
+    & $wails build -clean -trimpath -webview2 embed -o $exeName `
+        -ldflags "-s -w -X file-search/internal/update.CurrentVersion=$Version"
     if ($LASTEXITCODE) { throw "Сборка не удалась" }
 } finally { Pop-Location }
 

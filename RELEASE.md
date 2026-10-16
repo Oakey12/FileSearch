@@ -19,8 +19,32 @@ P:\FileSearch  ──(FileSearchReleaseTool.exe)──►  C:\Users\1108\nginx-1
 4. Текущий `exe` переименовывается в `.old`, новый ставится на его место и запускается, старый процесс закрывается.
 5. При следующем запуске остатки `.old` и `.new` удаляются сами.
 
-Текущая версия показывается в заголовке окна. Номер версии подставляется при сборке флагом
-`-X file-search/internal/update.CurrentVersion=<версия>`, и вручную его править не нужно.
+Текущая версия показывается в левой панели над кнопкой «Обновить». Номер версии подставляется
+при сборке флагом `-X file-search/internal/update.CurrentVersion=<версия>`, и вручную его править не нужно.
+
+## Сборка (Wails)
+
+С версии 2.0 интерфейс сделан на [Wails](https://wails.io): логика на Go, окно — WebView2.
+Обычный `go build` здесь не подходит, собирать нужно через `wails build`: он собирает
+фронтенд (`frontend/`) и встраивает его в exe.
+
+На машине сборки нужны Go 1.25+, Node.js 20+ и Wails CLI:
+
+```powershell
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
+wails doctor
+```
+
+Собрать и опубликовать одной командой:
+
+```powershell
+.\tools\release.ps1 -Version 2.0.0 -Notes "Новый интерфейс"
+```
+
+Для разработки: `wails dev` — окно с горячей перезагрузкой интерфейса.
+
+Программа работает на Windows 10 и 11. Если на компьютере нет WebView2 (на Windows 11 он
+встроен), при первом запуске программа предложит его установить.
 
 > Папка, где лежит `exe` у пользователя, должна быть доступна ему на запись.
 > Из `C:\Program Files` обновление не сработает.
@@ -124,4 +148,6 @@ New-NetFirewallRule -DisplayName "Nginx FileSearch 1212" -Direction Inbound -Pro
 - `C:\Users\1108\Desktop\filesearch-release-tool` — старая копия утилиты, настроенная под 1Cproc
   (порт 8080, несуществующий `VersionFile`, пакет `./src`). Для FileSearch используйте
   `P:\FileSearchReleaseTool`.
-- `tools\release.ps1` в проекте устарел: он собирает пакет `.`, а `main` лежит в `./cmd`.
+- `P:\FileSearchReleaseTool` собирает через `go build ./cmd` — для версии на Wails это не подходит.
+  В `scripts\build_release.go` сборку нужно заменить на `wails build` (как в `tools\release.ps1`),
+  а `BuildTarget` в `config.go` больше не используется.
