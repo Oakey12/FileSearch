@@ -1,6 +1,6 @@
-// Декодер 1С: показывает модули и формы внешних обработок и отчётов
-// (.epf, .erf — 1С 8; .ert — 1С 7.7) человекочитаемым кодом, без Конфигуратора.
-// Модули можно поправить и сохранить как новый файл.
+// Декодер 1С: показывает модули и формы обработок, отчётов, конфигураций и
+// расширений (.epf, .erf, .cf, .cfe — 1С 8; .ert, .md — 1С 7.7) человекочитаемым
+// кодом, без Конфигуратора. Модули можно поправить и сохранить в том же формате.
 
 import * as Go from '../wailsjs/go/main/App'
 import { ClipboardSetText } from '../wailsjs/runtime/runtime'
@@ -14,7 +14,8 @@ export interface OneCSection {
   group: string
   title: string
   kind: string // module | text
-  text: string
+  text?: string // у больших файлов — подгружается при выборе
+  lines: number
   editable: boolean
   note?: string
 }
@@ -29,8 +30,9 @@ export interface OneCDoc {
   canSave: boolean
 }
 
-export const ONEC_EXTENSIONS = ['epf', 'erf', 'ert']
-const GROUP_ORDER = ['Модули', 'Формы', 'Макеты', 'Справка', 'Описание']
+// .md здесь нет: это ещё и Markdown. Конфигурацию 7.7 распознаёт предпросмотр и бэкенд.
+export const ONEC_EXTENSIONS = ['epf', 'erf', 'cf', 'cfe', 'ert']
+const FILTER_FROM = 20 // фильтр над списком, когда разделов больше
 const RECENT_KEY = 'onecRecent'
 const MAX_RECENT = 8
 
@@ -54,7 +56,9 @@ export class Decoder {
 
   private doc: OneCDoc | null = null
   private currentId = ''
+  private texts = new Map<string, string>() // загруженные тексты разделов
   private edits = new Map<string, string>()
+  private filter = ''
   private editing = false
   private finds: Range[] = []
   private findIndex = -1
@@ -96,7 +100,7 @@ export class Decoder {
     this.backButton.addEventListener('click', () => this.close())
     this.nav.addEventListener('click', (e) => {
       const item = (e.target as HTMLElement).closest<HTMLElement>('[data-id]')
-      if (item) this.show(item.dataset.id!)
+      if (item) void this.show(item.dataset.id!)
     })
     this.editor.addEventListener('input', () => this.onEdit())
     this.editor.addEventListener('keydown', (e) => {
@@ -198,7 +202,10 @@ export class Decoder {
     try {
       const doc = (await Go.OpenOneC(path)) as OneCDoc
       this.doc = doc
+      this.texts.clear()
+      for (const sec of doc.sections) if (sec.text !== undefined && sec.text !== '') this.texts.set(sec.id, sec.text)
       this.edits.clear()
+      this.filter = ''
       this.editing = false
       this.findInput.value = '' // поиск прошлого файла здесь не нужен
       this.remember(path)
@@ -252,28 +259,58 @@ export class Decoder {
     this.title.textContent = doc.synonym && doc.synonym !== doc.name ? `${doc.name} — ${doc.synonym}` : doc.name
     this.meta.textContent = `${doc.kind}, ${doc.format}. ${baseName(doc.path)}`
     this.renderNav()
-    const first = doc.sections.find((s) => s.kind === 'module' && s.text) ?? doc.sections[0]
-    this.show(first.id)
+    const first = doc.sections.find((s) => s.kind === 'module' && s.lines > 1) ?? doc.sections[0]
+    void this.show(first.id)
   }
 
   private renderNav(): void {
     const doc = this.doc!
     const nodes: HTMLElement[] = []
-    const groups = [...new Set(doc.sections.map((s) => s.group))].sort((a, b) => GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b))
+    if (doc.sections.length > FILTER_FROM) nodes.push(this.filterBox())
+    const query = normalize(this.filter.trim())
+    const visible = query ? doc.sections.filter((s) => normalize(`${s.group} ${s.title}`).includes(query)) : doc.sections
+    // Группы — в порядке, в котором их отдал разбор (как в Конфигураторе).
+    const groups = [...new Set(visible.map((s) => s.group))]
     for (const group of groups) {
-      nodes.push(el('p', 'dnav-group', group))
-      for (const s of doc.sections.filter((x) => x.group === group)) {
+      const items = visible.filter((x) => x.group === group)
+      nodes.push(el('p', 'dnav-group', items.length > 1 ? `${group} · ${items.length}` : group))
+      for (const s of items) {
         const item = el('button', 'dnav-item')
         item.type = 'button'
         item.dataset.id = s.id
+        item.title = s.title
         item.setAttribute('aria-current', String(s.id === this.currentId))
-        const lines = s.text ? s.text.split('\n').length : 0
-        item.append(el('span', 'dnav-title', s.title), el('span', 'dnav-meta', lines ? `${lines} стр.` : '—'))
+        item.append(el('span', 'dnav-title', s.title), el('span', 'dnav-meta', s.lines ? `${s.lines} стр.` : '—'))
         if (this.edits.has(s.id)) item.append(el('span', 'dnav-dot'))
         nodes.push(item)
       }
     }
+    if (!visible.length) nodes.push(el('p', 'dnav-empty', 'Ничего не найдено'))
+    // Поле фильтра пересоздаётся — сохраняем фокус и курсор.
+    const focused = document.activeElement?.classList.contains('dnav-filter-input')
     this.nav.replaceChildren(...nodes)
+    if (focused) {
+      const input = this.nav.querySelector<HTMLInputElement>('.dnav-filter-input')
+      input?.focus()
+      input?.setSelectionRange(input.value.length, input.value.length)
+    }
+  }
+
+  private filterBox(): HTMLElement {
+    const box = el('label', 'dnav-filter')
+    box.innerHTML = '<svg><use href="#i-search"/></svg>'
+    const input = el('input', 'dnav-filter-input')
+    input.type = 'search'
+    input.placeholder = 'Фильтр модулей'
+    input.spellcheck = false
+    input.value = this.filter
+    input.setAttribute('aria-label', 'Фильтр модулей и форм')
+    input.addEventListener('input', () => {
+      this.filter = input.value
+      this.renderNav()
+    })
+    box.append(input)
+    return box
   }
 
   private get section(): OneCSection | undefined {
@@ -281,14 +318,31 @@ export class Decoder {
   }
 
   private textOf(s: OneCSection): string {
-    return this.edits.get(s.id) ?? s.text
+    return this.edits.get(s.id) ?? this.texts.get(s.id) ?? ''
   }
 
-  private show(id: string): void {
+  private original(s: OneCSection): string {
+    return this.texts.get(s.id) ?? ''
+  }
+
+  private async show(id: string): Promise<void> {
     if (this.editing) this.setEditing(false)
     this.currentId = id
     const s = this.section
-    if (!s) return
+    if (!s || !this.doc) return
+    if (!this.texts.has(id) && s.lines) {
+      // Текст модуля большого файла — по запросу.
+      this.sectionTitle.textContent = s.title
+      this.code.textContent = 'Загрузка…'
+      try {
+        const text = await Go.OneCSectionText(this.doc.path, id)
+        this.texts.set(id, text)
+      } catch (err) {
+        toast(String(err))
+        return
+      }
+      if (this.currentId !== id) return // пока грузилось, выбрали другое
+    }
     this.nav.querySelectorAll<HTMLElement>('[data-id]').forEach((b) => b.setAttribute('aria-current', String(b.dataset.id === id)))
     this.sectionTitle.textContent = s.title
     this.note.textContent = s.note ?? ''
@@ -350,7 +404,7 @@ export class Decoder {
   private onEdit(): void {
     const s = this.section
     if (!s) return
-    if (this.editor.value === s.text) this.edits.delete(s.id)
+    if (this.editor.value === this.original(s)) this.edits.delete(s.id)
     else this.edits.set(s.id, this.editor.value)
     this.renderNav()
     this.updateButtons()
@@ -360,7 +414,7 @@ export class Decoder {
     const s = this.section
     if (!s) return
     this.edits.delete(s.id)
-    if (this.editing) this.editor.value = s.text
+    if (this.editing) this.editor.value = this.original(s)
     this.renderCode()
     this.renderNav()
     this.updateButtons()
@@ -376,7 +430,7 @@ export class Decoder {
       const backup = await Go.SaveOneCInPlace(doc.path, Object.fromEntries(this.edits))
       this.edits.clear()
       await this.open(doc.path, true) // перечитать файл с диска — показываем то, что записано
-      this.show(keep)
+      await this.show(keep)
       toast(`Сохранено в «${baseName(doc.path)}». Исходник — в резервных копиях`, 'Показать копию', () => void Go.ShowInExplorer(backup))
     } catch (err) {
       toast(String(err))

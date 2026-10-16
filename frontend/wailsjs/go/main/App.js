@@ -22,6 +22,10 @@ export function LoadNotes(arg1) {
   return window['go']['main']['App']['LoadNotes'](arg1);
 }
 
+export function OneCSectionText(arg1, arg2) {
+  return window['go']['main']['App']['OneCSectionText'](arg1, arg2);
+}
+
 export function OpenFile(arg1) {
   return window['go']['main']['App']['OpenFile'](arg1);
 }

@@ -1,13 +1,11 @@
 package onec
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 )
 
@@ -16,8 +14,9 @@ type Section struct {
 	ID       string `json:"id"`
 	Group    string `json:"group"` // «Модули», «Формы», «Макеты», «Справка», «Описание»
 	Title    string `json:"title"`
-	Kind     string `json:"kind"` // module — код 1С, text — прочий текст
-	Text     string `json:"text"`
+	Kind     string `json:"kind"`           // module — код 1С, text — прочий текст
+	Text     string `json:"text,omitempty"` // у больших файлов текст запрашивается отдельно
+	Lines    int    `json:"lines"`
 	Editable bool   `json:"editable"`
 	Note     string `json:"note,omitempty"`
 }
@@ -39,9 +38,9 @@ type File struct {
 	v8      *container
 	setters map[string]func(string) // id раздела → запись нового текста
 
-	// 1С 7.7: исходный файл и новый текст модуля (nil — модуль не меняли).
-	ertPath   string
-	ertModule *string
+	// 1С 7.7: исходный файл и новые тексты модулей (путь потока → текст).
+	ole77Path  string
+	ole77Edits map[string]string
 }
 
 const maxFileSize = 512 << 20
@@ -64,15 +63,42 @@ func Open(path string) (*File, error) {
 	case IsV8(data):
 		file, err = openV8(path, data)
 	case IsOLE(data):
-		file, err = openERT(path)
+		file, err = open77(path)
 	default:
-		return nil, errors.New("это не обработка или отчёт 1С (ожидается .epf, .erf или .ert)")
+		return nil, errors.New("это не файл 1С (ожидается .epf, .erf, .cf, .cfe, .ert или .md)")
 	}
 	if err != nil {
 		return nil, err
 	}
 	file.Doc.Path = path
+	for i := range file.Doc.Sections {
+		if t := file.Doc.Sections[i].Text; t != "" {
+			file.Doc.Sections[i].Lines = strings.Count(t, "\n") + 1
+		}
+	}
 	return file, nil
+}
+
+// Outline — документ без текстов разделов: для конфигураций с тысячами модулей
+// интерфейс получает список, а текст модуля запрашивает при выборе (SectionText).
+func (f *File) Outline() Document {
+	doc := f.Doc
+	doc.Sections = make([]Section, len(f.Doc.Sections))
+	for i, s := range f.Doc.Sections {
+		s.Text = ""
+		doc.Sections[i] = s
+	}
+	return doc
+}
+
+// SectionText — текст раздела по id.
+func (f *File) SectionText(id string) (string, bool) {
+	for _, s := range f.Doc.Sections {
+		if s.ID == id {
+			return s.Text, true
+		}
+	}
+	return "", false
 }
 
 // ExtractText — все модули файла одним текстом (для поиска по содержимому).
@@ -106,105 +132,6 @@ var (
 	moxcelStrRe = regexp.MustCompile(`"((?:[^"]|""){2,})"`)
 )
 
-func openV8(path string, data []byte) (*File, error) {
-	root, err := parseContainer(data, 0)
-	if err != nil {
-		return nil, err
-	}
-	file := &File{v8: root, setters: map[string]func(string){}}
-	doc := &file.Doc
-	doc.Format = "1С:Предприятие 8"
-	doc.Kind = "Внешняя обработка"
-	if strings.EqualFold(filepath.Ext(path), ".erf") {
-		doc.Kind = "Внешний отчёт"
-	}
-	doc.Name = baseName(path)
-	doc.CanSave = true
-
-	// root → «{2,<guid главного объекта>,}».
-	mainGUID := ""
-	if e := root.find("root"); e != nil {
-		mainGUID = guidRe.FindString(string(e.payload))
-	}
-	objectID := ""
-	if e := root.find(mainGUID); e != nil {
-		if names := objectNames(string(e.payload)); len(names) > 0 {
-			objectID, doc.Name, doc.Synonym = names[0].id, names[0].name, names[0].synonym
-		}
-	}
-
-	// Модуль объекта — «<id>.0», вложенный контейнер с элементом text.
-	for _, id := range []string{objectID, mainGUID} {
-		if id == "" {
-			continue
-		}
-		if e := root.find(id + ".0"); e != nil && e.child != nil {
-			if text := e.child.find("text"); text != nil {
-				file.addTextElem(Section{ID: "object", Group: "Модули", Title: "Модуль объекта", Kind: "module", Editable: true}, text)
-				break
-			}
-		}
-	}
-
-	// Формы и макеты: элементы с именем-GUID, у которых есть «<guid>.0».
-	type child struct {
-		guid, name, synonym string
-	}
-	var children []child
-	for _, e := range root.elems {
-		if !guidRe.MatchString(e.Name) || len(e.Name) != 36 || e.Name == mainGUID {
-			continue
-		}
-		name := e.Name
-		synonym := ""
-		for _, n := range objectNames(string(e.payload)) {
-			if n.id == e.Name {
-				name, synonym = n.name, n.synonym
-				break
-			}
-		}
-		children = append(children, child{e.Name, name, synonym})
-	}
-	sort.SliceStable(children, func(i, j int) bool { return children[i].name < children[j].name })
-
-	for _, c := range children {
-		e := root.find(c.guid + ".0")
-		if e == nil {
-			continue
-		}
-		title := c.name
-		switch {
-		case e.child != nil && e.child.find("module") != nil:
-			// Обычная форма: контейнер с элементами form и module.
-			file.addTextElem(Section{ID: "form:" + c.guid, Group: "Формы", Title: title, Kind: "module", Editable: true}, e.child.find("module"))
-		case strings.HasPrefix(string(e.payload), "MOXCEL"):
-			doc.Sections = append(doc.Sections, Section{ID: "tpl:" + c.guid, Group: "Макеты", Title: title, Kind: "text",
-				Note: "Табличный документ. Его оформление открывается только в 1С; ниже — текст ячеек.", Text: moxcelText(e.payload)})
-		case strings.HasPrefix(strings.TrimPrefix(string(e.payload), bom), "{"):
-			file.addManagedForm(c.guid, title, e)
-		}
-	}
-
-	// Справка — HTML в base64 внутри «<id>.1».
-	for _, id := range []string{objectID, mainGUID} {
-		if e := root.find(id + ".1"); id != "" && e != nil {
-			if m := base64Re.FindStringSubmatch(string(e.payload)); m != nil {
-				if raw, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(m[1]), "")); err == nil {
-					if text := htmlToText(strings.TrimPrefix(string(raw), bom)); text != "" {
-						doc.Sections = append(doc.Sections, Section{ID: "help", Group: "Справка", Title: "Справка", Kind: "text", Text: text})
-					}
-				}
-			}
-			break
-		}
-	}
-
-	if len(doc.Sections) == 0 {
-		return nil, errors.New("в файле не найдено ни модулей, ни форм")
-	}
-	return file, nil
-}
-
 // addTextElem — раздел из элемента-текста (модуль объекта, модуль обычной формы).
 func (f *File) addTextElem(sec Section, e *v8Elem) {
 	hasBOM := strings.HasPrefix(string(e.payload), bom)
@@ -221,19 +148,18 @@ func (f *File) addTextElem(sec Section, e *v8Elem) {
 }
 
 // addManagedForm — управляемая форма: модуль хранится строкой верхнего уровня
-// в скобочном описании формы (обычно третий элемент списка).
-func (f *File) addManagedForm(guid, title string, e *v8Elem) {
+// в скобочном описании формы.
+func (f *File) addManagedForm(id, group, title string, e *v8Elem) {
 	form := string(e.payload)
 	var span [2]int
 	found := false
 	for _, s := range stringsAtDepth(form, 1) {
-		text := form[s[0]:s[1]]
-		if looksLikeCode(text) {
+		if looksLikeCode(form[s[0]:s[1]]) {
 			span, found = s, true
 			break
 		}
 	}
-	sec := Section{ID: "form:" + guid, Group: "Формы", Title: title, Kind: "module"}
+	sec := Section{ID: id, Group: group, Title: title, Kind: "module"}
 	if !found {
 		sec.Note = "У этой формы нет модуля."
 		f.Doc.Sections = append(f.Doc.Sections, sec)
@@ -304,9 +230,9 @@ func (f *File) SaveTo(dst string, edits map[string]string) error {
 		if err := f.applyEdits(edits); err != nil {
 			return err
 		}
-		if f.ertModule == nil {
-			// Модуль не меняли — копия исходного файла.
-			data, err := os.ReadFile(f.ertPath)
+		if len(f.ole77Edits) == 0 {
+			// Модули не меняли — копия исходного файла.
+			data, err := os.ReadFile(f.ole77Path)
 			if err != nil {
 				return err
 			}
@@ -314,11 +240,15 @@ func (f *File) SaveTo(dst string, edits map[string]string) error {
 				return err
 			}
 		} else {
-			packed, err := deflate(encode1251(windowsEOL(*f.ertModule)))
-			if err != nil {
-				return err
+			streams := map[string][]byte{}
+			for path, text := range f.ole77Edits {
+				packed, err := deflate(encode1251(windowsEOL(text)))
+				if err != nil {
+					return err
+				}
+				streams[path] = packed
 			}
-			if err := writeERT(f.ertPath, tmp, ertModuleStream, packed); err != nil {
+			if err := writeOLE(f.ole77Path, tmp, streams); err != nil {
 				return err
 			}
 		}

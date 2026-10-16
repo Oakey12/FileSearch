@@ -91,14 +91,15 @@ func Load(path string) (Result, error) {
 		result.Kind = KindImage
 	case ext == ".pdf":
 		result.Kind = KindPDF
+	// Файлы 1С — раньше текстовых: .md бывает и Markdown, и конфигурацией 1С 7.7.
+	case ext == ".epf" || ext == ".erf" || ext == ".ert" || ext == ".cf" || ext == ".cfe" || (ext == ".md" && isOneC77(path)):
+		err = loadOneC(path, &result)
 	case content.IsText(path):
 		err = loadText(path, &result)
 	case ext == ".docx":
 		err = loadDOCX(path, &result)
 	case ext == ".pptx":
 		err = loadSlides(path, &result)
-	case ext == ".epf" || ext == ".erf" || ext == ".ert":
-		err = loadOneC(path, &result)
 	case ext == ".xlsx" || ext == ".xlsm" || ext == ".xltx" || ext == ".xltm":
 		err = loadSheets(path, &result)
 	case ext == ".doc" || ext == ".xls":
@@ -152,6 +153,18 @@ func loadSlides(path string, result *Result) error {
 	result.Kind = KindText
 	result.Text = text
 	return nil
+}
+
+// isOneC77 — .md оказался конфигурацией 1С 7.7, а не Markdown.
+func isOneC77(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	head := make([]byte, 8)
+	n, _ := f.Read(head)
+	return onec.IsOLE(head[:n])
 }
 
 // loadOneC показывает модули внешней обработки или отчёта 1С текстом.

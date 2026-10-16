@@ -28,7 +28,8 @@ export namespace onec {
 	    group: string;
 	    title: string;
 	    kind: string;
-	    text: string;
+	    text?: string;
+	    lines: number;
 	    editable: boolean;
 	    note?: string;
 	
@@ -43,6 +44,7 @@ export namespace onec {
 	        this.title = source["title"];
 	        this.kind = source["kind"];
 	        this.text = source["text"];
+	        this.lines = source["lines"];
 	        this.editable = source["editable"];
 	        this.note = source["note"];
 	    }

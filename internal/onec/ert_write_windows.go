@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -34,6 +35,7 @@ const (
 	// Номера методов в таблицах виртуальных функций.
 	vtRelease      = 2
 	vtCreateStream = 3 // IStorage
+	vtOpenStorage  = 6 // IStorage
 	vtCopyTo       = 7 // IStorage
 	vtCommit       = 9 // IStorage
 	vtWrite        = 4 // IStream
@@ -55,8 +57,9 @@ func (o *comObj) release() {
 
 func failed(hr uintptr) bool { return int32(uint32(hr)) < 0 }
 
-// writeERT копирует src в dst, заменяя поток streamName на data.
-func writeERT(src, dst, streamName string, data []byte) error {
+// writeOLE копирует src в dst и заменяет потоки по путям вида
+// «Хранилище/Вложенное/Поток» (у .ert модуль лежит в корне: «MD Programm text»).
+func writeOLE(src, dst string, streams map[string][]byte) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	if hr, _, _ := procCoInitializeEx.Call(0, 0x2); !failed(hr) {
@@ -68,10 +71,6 @@ func writeERT(src, dst, streamName string, data []byte) error {
 		return err
 	}
 	dstName, err := syscall.UTF16PtrFromString(dst)
-	if err != nil {
-		return err
-	}
-	stream, err := syscall.UTF16PtrFromString(streamName)
 	if err != nil {
 		return err
 	}
@@ -92,21 +91,56 @@ func writeERT(src, dst, streamName string, data []byte) error {
 		return fmt.Errorf("не удалось скопировать содержимое (0x%08X)", uint32(hr))
 	}
 
-	var s *comObj
-	if hr := out.call(vtCreateStream, uintptr(unsafe.Pointer(stream)), stgmCreate|stgmReadWrite|stgmShareExclusive, 0, 0, uintptr(unsafe.Pointer(&s))); failed(hr) || s == nil {
-		return fmt.Errorf("не удалось записать модуль (0x%08X)", uint32(hr))
-	}
-	var written uint32
-	var hr uintptr
-	if len(data) > 0 {
-		hr = s.call(vtWrite, uintptr(unsafe.Pointer(&data[0])), uintptr(len(data)), uintptr(unsafe.Pointer(&written)))
-	}
-	s.release()
-	if failed(hr) || int(written) != len(data) {
-		return errors.New("модуль записан не полностью")
+	for path, data := range streams {
+		if err := replaceStream(out, path, data); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
 	}
 	if hr := out.call(vtCommit, 0); failed(hr) {
 		return fmt.Errorf("не удалось сохранить файл (0x%08X)", uint32(hr))
+	}
+	return nil
+}
+
+// replaceStream открывает вложенные хранилища по пути и перезаписывает поток.
+func replaceStream(root *comObj, path string, data []byte) error {
+	parts := strings.Split(path, "/")
+	cur := root
+	var opened []*comObj
+	defer func() {
+		// Изменения вложенных хранилищ фиксируются снизу вверх.
+		for i := len(opened) - 1; i >= 0; i-- {
+			opened[i].call(vtCommit, 0)
+			opened[i].release()
+		}
+	}()
+	for _, part := range parts[:len(parts)-1] {
+		name, err := syscall.UTF16PtrFromString(part)
+		if err != nil {
+			return err
+		}
+		var sub *comObj
+		if hr := cur.call(vtOpenStorage, uintptr(unsafe.Pointer(name)), 0, stgmReadWrite|stgmShareExclusive, 0, 0, uintptr(unsafe.Pointer(&sub))); failed(hr) || sub == nil {
+			return fmt.Errorf("не найдено хранилище %q (0x%08X)", part, uint32(hr))
+		}
+		opened = append(opened, sub)
+		cur = sub
+	}
+	leaf, err := syscall.UTF16PtrFromString(parts[len(parts)-1])
+	if err != nil {
+		return err
+	}
+	var s *comObj
+	if hr := cur.call(vtCreateStream, uintptr(unsafe.Pointer(leaf)), stgmCreate|stgmReadWrite|stgmShareExclusive, 0, 0, uintptr(unsafe.Pointer(&s))); failed(hr) || s == nil {
+		return fmt.Errorf("не удалось записать поток (0x%08X)", uint32(hr))
+	}
+	defer s.release()
+	if len(data) == 0 {
+		return nil
+	}
+	var written uint32
+	if hr := s.call(vtWrite, uintptr(unsafe.Pointer(&data[0])), uintptr(len(data)), uintptr(unsafe.Pointer(&written))); failed(hr) || int(written) != len(data) {
+		return errors.New("поток записан не полностью")
 	}
 	return nil
 }

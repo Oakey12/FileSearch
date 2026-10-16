@@ -201,9 +201,10 @@ renderOneCRecent()
 
 // Перетащили файл в окно: обработку 1С — в декодер.
 OnFileDrop((_x, _y, paths) => {
-  const file = paths.find(isOneCFile)
+  // .md проверит бэкенд: конфигурацию 7.7 откроет, Markdown — отклонит с понятной ошибкой.
+  const file = paths.find(isOneCFile) ?? paths.find((p) => p.toLowerCase().endsWith('.md'))
   if (file) void openOneC(file)
-  else toast('Перетащите файл обработки или отчёта 1С: .epf, .erf или .ert')
+  else toast('Перетащите файл 1С: .epf, .erf, .cf, .cfe, .ert или .md')
 }, false)
 
 // --- Поиск -------------------------------------------------------------
