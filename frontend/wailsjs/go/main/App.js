@@ -26,8 +26,16 @@ export function OpenFile(arg1) {
   return window['go']['main']['App']['OpenFile'](arg1);
 }
 
+export function OpenOneC(arg1) {
+  return window['go']['main']['App']['OpenOneC'](arg1);
+}
+
 export function PickFolder(arg1) {
   return window['go']['main']['App']['PickFolder'](arg1);
+}
+
+export function PickOneCFile() {
+  return window['go']['main']['App']['PickOneCFile']();
 }
 
 export function Preview(arg1) {
@@ -40,6 +48,14 @@ export function RecentFolders() {
 
 export function SaveNotes(arg1, arg2) {
   return window['go']['main']['App']['SaveNotes'](arg1, arg2);
+}
+
+export function SaveOneC(arg1, arg2) {
+  return window['go']['main']['App']['SaveOneC'](arg1, arg2);
+}
+
+export function SaveOneCText(arg1, arg2) {
+  return window['go']['main']['App']['SaveOneCText'](arg1, arg2);
 }
 
 export function Search(arg1, arg2, arg3, arg4) {

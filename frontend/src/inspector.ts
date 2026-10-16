@@ -1,6 +1,7 @@
 // Панель предпросмотра справа (как Quick Look в macOS).
 // Содержимое файлов вставляется только через textContent.
 
+import { isOneCFile } from './decoder'
 import { formatLongDate, formatSize, kindOf } from './format'
 import { highlightInto, normalize } from './highlight'
 import type { FileItem } from './list'
@@ -26,6 +27,7 @@ export interface InspectorActions {
   open(path: string): void
   reveal(path: string): void
   toBoard(item: FileItem): void
+  openOneC(path: string): void
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -226,6 +228,15 @@ export class Inspector {
     open.addEventListener('click', () => this.actions.open(item.path))
     reveal.addEventListener('click', () => this.actions.reveal(item.path))
     board.addEventListener('click', () => this.actions.toBoard(item))
+    if (isOneCFile(item.path)) {
+      // Для обработок 1С главное действие — посмотреть код в декодере.
+      const decode = el('button', 'btn btn-primary', 'Открыть в декодере 1С')
+      decode.type = 'button'
+      decode.addEventListener('click', () => this.actions.openOneC(item.path))
+      open.className = 'btn'
+      row.append(decode, open, reveal, board)
+      return row
+    }
     row.append(open, reveal, board)
     return row
   }

@@ -7,12 +7,14 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"file-search/internal/content"
+	"file-search/internal/onec"
 	"file-search/internal/preview"
 	"file-search/internal/search"
 	"file-search/internal/settings"
@@ -48,12 +50,15 @@ type App struct {
 
 	updateMu sync.Mutex
 	release  *update.Release
+
+	onecMu    sync.Mutex
+	onecFiles map[string]*onec.File // открытые в декодере файлы
 }
 
 const maxFiles = 32
 
 func NewApp() *App {
-	return &App{files: map[string]string{}, docs: content.NewCache(docsCacheSize)}
+	return &App{files: map[string]string{}, docs: content.NewCache(docsCacheSize), onecFiles: map[string]*onec.File{}}
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -226,6 +231,81 @@ func (a *App) fileMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		http.ServeFile(w, r, path)
 	})
+}
+
+// --- Декодер 1С ----------------------------------------------------------
+
+var onecFilters = []runtime.FileFilter{{DisplayName: "Обработки и отчёты 1С (*.epf, *.erf, *.ert)", Pattern: "*.epf;*.erf;*.ert"}}
+
+// PickOneCFile открывает стандартное окно выбора файла обработки или отчёта 1С.
+func (a *App) PickOneCFile() (string, error) {
+	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{Title: "Открыть обработку или отчёт 1С", Filters: onecFilters})
+}
+
+// OpenOneC разбирает .epf/.erf (1С 8) или .ert (1С 7.7) и возвращает модули и формы.
+func (a *App) OpenOneC(path string) (onec.Document, error) {
+	f, err := onec.Open(path)
+	if err != nil {
+		return onec.Document{}, err
+	}
+	a.onecMu.Lock()
+	a.onecFiles[path] = f
+	a.onecMu.Unlock()
+	return f.Doc, nil
+}
+
+// SaveOneC сохраняет правки модулей в новый файл того же формата и возвращает его путь.
+// Пустая строка — пользователь закрыл окно сохранения.
+func (a *App) SaveOneC(path string, edits map[string]string) (string, error) {
+	a.onecMu.Lock()
+	f := a.onecFiles[path]
+	a.onecMu.Unlock()
+	if f == nil {
+		return "", errors.New("файл не открыт в декодере")
+	}
+	ext := filepath.Ext(path)
+	target, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:            "Сохранить как новый файл",
+		DefaultDirectory: filepath.Dir(path),
+		DefaultFilename:  strings.TrimSuffix(filepath.Base(path), ext) + " (изменённый)" + ext,
+		Filters:          onecFilters,
+	})
+	if err != nil || target == "" {
+		return "", err
+	}
+	if strings.EqualFold(filepath.Clean(target), filepath.Clean(path)) {
+		return "", errors.New("сохраните под другим именем — исходный файл не перезаписывается")
+	}
+	// Правки накладываются на свежую копию, чтобы исходный разбор остался нетронутым.
+	fresh, err := onec.Open(path)
+	if err != nil {
+		return "", err
+	}
+	data, err := fresh.Save(edits)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(target, data, 0o644); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+// SaveOneCText сохраняет текст модуля в файл .bsl/.txt (UTF-8 с BOM — так его понимает 1С).
+func (a *App) SaveOneCText(suggestedName, text string) (string, error) {
+	target, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Сохранить модуль в файл",
+		DefaultFilename: suggestedName,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Модуль 1С (*.bsl)", Pattern: "*.bsl"},
+			{DisplayName: "Текст (*.txt)", Pattern: "*.txt"},
+		},
+	})
+	if err != nil || target == "" {
+		return "", err
+	}
+	data := "\uFEFF" + strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\n", "\r\n")
+	return target, os.WriteFile(target, []byte(data), 0o644)
 }
 
 // --- Заметки -----------------------------------------------------------
