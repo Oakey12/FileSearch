@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BACKDROP_KEY, PARTICLE_COUNT, applyBackdrop, currentBackdrop, loadBackdrop, makeParticles, mountParticles, saveBackdrop, watchSmoothness } from './backdrop'
+import { BACKDROP_KEY, FIREFLY_COUNT, PARTICLE_COUNT, applyBackdrop, currentBackdrop, loadBackdrop, makeFireflies, makeForest, makeParticles, mountForest, mountParticles, saveBackdrop, watchSmoothness } from './backdrop'
 
 function memoryStore() {
   const data = new Map<string, string>()
@@ -126,5 +126,56 @@ describe('плавность', () => {
     const slow = vi.fn()
     runFrames(40, slow) // 25 кадров в секунду
     expect(slow).toHaveBeenCalledOnce()
+  })
+})
+
+describe('лес', () => {
+  it('выбор «Лес» сохраняется, неизвестное значение — без фона', () => {
+    const store = memoryStore()
+    saveBackdrop('forest', () => store)
+    expect(loadBackdrop(() => store)).toBe('forest')
+    store.setItem(BACKDROP_KEY, 'что-то старое')
+    expect(loadBackdrop(() => store)).toBe('none')
+    const root = document.createElement('html')
+    applyBackdrop('forest', root)
+    expect(currentBackdrop(root)).toBe('forest')
+  })
+
+  it('светлячки летают по всему окну, вспыхивают в разное время', () => {
+    const flies = makeFireflies(300, seeded(11))
+    for (const f of flies) {
+      expect(f.path).toHaveLength(8)
+      expect(f.delay).toBeLessThanOrEqual(0)
+      expect(f.flash).toBeGreaterThanOrEqual(5000)
+      expect(f.flash).toBeLessThanOrEqual(11000)
+      expect(-f.flashDelay).toBeLessThanOrEqual(f.flash)
+    }
+    const xs = flies.flatMap((f) => f.path.map(([x]) => x))
+    expect(Math.min(...xs)).toBeLessThan(5)
+    expect(Math.max(...xs)).toBeGreaterThan(95)
+    // Вспышки не одновременные.
+    expect(new Set(flies.map((f) => Math.round(f.flashDelay / 500))).size).toBeGreaterThan(10)
+  })
+
+  it('лес — корректный SVG из трёх слоёв деревьев', () => {
+    const svg = new DOMParser().parseFromString(makeForest(seeded(5)), 'image/svg+xml')
+    expect(svg.querySelector('parsererror')).toBeNull()
+    expect(svg.querySelectorAll('g.far path').length).toBeGreaterThan(20)
+    expect(svg.querySelectorAll('g.mid path').length).toBeGreaterThan(10)
+    expect(svg.querySelectorAll('g.near path').length).toBeGreaterThan(5)
+  })
+
+  it('рисуется и убирается без следа', () => {
+    const scene = document.createElement('div')
+    const forest = document.createElement('div')
+    const host = document.createElement('div')
+    const stop = mountForest(scene, forest, host, makeFireflies(FIREFLY_COUNT, seeded(2)))
+    expect(forest.querySelector('svg')).not.toBeNull()
+    expect(host.querySelectorAll('.ff')).toHaveLength(FIREFLY_COUNT)
+    expect(host.querySelectorAll('.ff-light')).toHaveLength(FIREFLY_COUNT)
+    expect(host.querySelector<HTMLElement>('.ff')!.style.getPropertyValue('--x7')).toMatch(/vw$/)
+    stop()
+    expect(forest.childElementCount).toBe(0)
+    expect(host.childElementCount).toBe(0)
   })
 })

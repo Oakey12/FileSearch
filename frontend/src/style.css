@@ -761,7 +761,7 @@ svg { flex: none; }
 
 @media (prefers-reduced-motion: reduce) {
   /* Кроме фона «Частицы»: его включают сами, и он должен двигаться. */
-  *:not(.bd-particle, .bd-dot, .bd-blob), *::before, *::after { animation: none !important; transition: none !important; }
+  *:not(.bd-particle, .bd-dot, .bd-blob, .ff, .ff-orbit, .ff-light, .bd-fog), *::before, *::after { animation: none !important; transition: none !important; }
 }
 
 /* === Режим поиска: имя или текст ======================================= */
@@ -1789,7 +1789,10 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
   pointer-events: none;
   --bd-glow: hsl(180 100% 80%);
 }
-:root[data-backdrop="particles"] .backdrop { display: block; }
+:root[data-backdrop] .backdrop { display: block; }
+.bd-scene { display: none; position: absolute; inset: 0; }
+:root[data-backdrop="particles"] .bd-scene-particles,
+:root[data-backdrop="forest"] .bd-scene-forest { display: block; }
 
 .bd-sky {
   position: absolute;
@@ -1869,7 +1872,7 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
    непрозрачной: читаемость важнее. */
 :root[data-backdrop="particles"] {
   background: #040817;
-  --sidebar: rgba(6, 9, 18, 0.88);
+  --sidebar: rgba(6, 9, 18, 0.8);
   --raised: rgba(30, 33, 44, 0.94);
   --raised-hover: rgba(42, 46, 60, 0.96);
   --hair: rgba(255, 255, 255, 0.07);
@@ -1877,38 +1880,38 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
   --glass: rgba(12, 14, 28, 0.4); /* стекло: боковая панель и строка поиска */
   --glass-blur: blur(22px) saturate(170%);
 }
-:root[data-backdrop="particles"] body { background: transparent; }
+:root[data-backdrop] body { background: transparent; }
 
 /* Как в macOS: боковая панель и строка поиска — матовое стекло, сквозь которое
    видны сияние и светлячки; список, предпросмотр и декодер — плотнее, ради текста.
    Размытие только на узких полосах, поэтому дёшево. */
-:root[data-backdrop="particles"] .sidebar,
-:root[data-backdrop="particles"] .toolbar,
-:root[data-backdrop="particles"] .scopebar {
+:root[data-backdrop] .sidebar,
+:root[data-backdrop] .toolbar,
+:root[data-backdrop] .scopebar {
   background: var(--glass);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
 }
-:root.bd-lite[data-backdrop="particles"] .sidebar,
-:root.bd-lite[data-backdrop="particles"] .toolbar,
-:root.bd-lite[data-backdrop="particles"] .scopebar {
+:root.bd-lite[data-backdrop] .sidebar,
+:root.bd-lite[data-backdrop] .toolbar,
+:root.bd-lite[data-backdrop] .scopebar {
   /* Слабая видеокарта: без размытия, только тонировка (см. watchSmoothness). */
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   background: var(--sidebar);
 }
-:root[data-backdrop="particles"] .results,
-:root[data-backdrop="particles"] .statusbar,
-:root[data-backdrop="particles"] .decoder { background: var(--main-tint); }
+:root[data-backdrop] .results,
+:root[data-backdrop] .statusbar,
+:root[data-backdrop] .decoder { background: var(--main-tint); }
 
 :root[data-theme="light"][data-backdrop="particles"] {
   background: #e4ebf7;
   --bd-blob-opacity: 0.42;
-  --sidebar: rgba(247, 249, 253, 0.86);
+  --sidebar: rgba(247, 249, 253, 0.8);
   --raised: rgba(255, 255, 255, 0.9);
   --raised-hover: rgba(255, 255, 255, 0.96);
   --hair: rgba(20, 40, 80, 0.1);
-  --main-tint: rgba(251, 252, 255, 0.78);
+  --main-tint: rgba(251, 252, 255, 0.8);
   --glass: rgba(255, 255, 255, 0.42);
 }
 :root[data-theme="light"] .backdrop { --bd-glow: hsl(212 85% 62% / 0.55); }
@@ -1918,6 +1921,120 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
     radial-gradient(70% 60% at 78% 8%, rgba(255, 255, 255, 0.9), transparent 62%),
     radial-gradient(60% 55% at 10% 92%, rgba(150, 190, 245, 0.55), transparent 66%),
     radial-gradient(45% 40% at 46% 52%, rgba(190, 170, 240, 0.25), transparent 72%);
+}
+
+/* === Фон окна «Лес» ==================================================== */
+/* Туманный ночной лес (SVG собирается один раз, неподвижен) и светлячки:
+   каждый медленно летит по своим восьми точкам, кружит петлями и время от
+   времени вспыхивает. Анимируются только transform и opacity. */
+
+:root[data-backdrop="forest"] {
+  background: #071314;
+  --forest-light: #5f8f80;
+  --forest-dark: #050d0e;
+  --forest-haze: #6f9c8e;
+  --tree-far: #2c4a46;
+  --tree-mid: #142624;
+  --tree-near: #060d0e;
+  --ff-color: 255 222 89;
+  /* Интерфейс прозрачен на 20 %. */
+  --sidebar: rgba(5, 12, 13, 0.8);
+  --raised: rgba(26, 38, 38, 0.92);
+  --raised-hover: rgba(38, 52, 52, 0.95);
+  --hair: rgba(255, 255, 255, 0.07);
+  --main-tint: rgba(5, 12, 13, 0.8);
+  --glass: rgba(8, 20, 20, 0.4);
+  --glass-blur: blur(22px) saturate(150%);
+}
+:root[data-theme="light"][data-backdrop="forest"] {
+  background: #dee7e2;
+  --forest-light: #f2f6f1;
+  --forest-dark: #b9cbc3;
+  --forest-haze: #eef3ee;
+  --tree-far: #a9bdb5;
+  --tree-mid: #7d958c;
+  --tree-near: #4c6159;
+  --ff-color: 230 170 20;
+  --sidebar: rgba(246, 249, 247, 0.8);
+  --raised: rgba(255, 255, 255, 0.9);
+  --raised-hover: rgba(255, 255, 255, 0.96);
+  --hair: rgba(20, 50, 40, 0.1);
+  --main-tint: rgba(250, 252, 251, 0.8);
+  --glass: rgba(255, 255, 255, 0.4);
+}
+
+.bd-forest, .bd-forest svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* Лес неподвижен: свой слой композитора — под туманом и светлячками он не перерисовывается. */
+.bd-forest { will-change: transform; contain: strict; }
+.bd-scene { contain: strict; }
+.bd-forest .far { fill: var(--tree-far); stroke: var(--tree-far); }
+.bd-forest .mid { fill: var(--tree-mid); stroke: var(--tree-mid); }
+.bd-forest .near { fill: var(--tree-near); stroke: var(--tree-near); }
+.bd-forest .br { fill: none; stroke-linecap: round; }
+
+/* Туман медленно стелется по низу. */
+.bd-fog {
+  position: absolute;
+  left: -30%;
+  right: -30%;
+  bottom: -10%;
+  height: 60%;
+  background:
+    radial-gradient(40% 50% at 30% 70%, color-mix(in srgb, var(--forest-haze) 35%, transparent), transparent 70%),
+    radial-gradient(35% 45% at 75% 60%, color-mix(in srgb, var(--forest-haze) 28%, transparent), transparent 70%);
+  animation: bd-fog 70s ease-in-out infinite alternate;
+  will-change: transform;
+}
+@keyframes bd-fog {
+  from { transform: translate3d(-8%, 0, 0); }
+  to { transform: translate3d(8%, -3%, 0); }
+}
+
+.bd-fireflies { position: absolute; inset: 0; }
+.ff {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translate3d(var(--x0), var(--y0), 0);
+  animation: ff-roam ease-in-out infinite alternate;
+  will-change: transform;
+}
+.ff-orbit {
+  display: block;
+  transform-origin: calc(-1 * var(--r)) 50%; /* петля вокруг точки пути */
+  animation: ff-orbit ease-in-out infinite alternate;
+  will-change: transform;
+}
+.ff-light {
+  display: block;
+  margin: -50% 0 0 -50%;
+  border-radius: 50%;
+  background: radial-gradient(rgb(255 252 220) 0 6%, rgb(var(--ff-color) / 0.9) 12%, rgb(var(--ff-color) / 0.35) 32%, transparent 66%);
+  opacity: 0.06;
+  animation: ff-flash ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.bd-paused .ff, .bd-paused .ff-orbit, .bd-paused .ff-light, .bd-paused .bd-fog,
+.bd-scene-forest.bd-paused .bd-fog { animation-play-state: paused; }
+
+@keyframes ff-roam {
+  0% { transform: translate3d(var(--x0), var(--y0), 0); }
+  14.28% { transform: translate3d(var(--x1), var(--y1), 0); }
+  28.57% { transform: translate3d(var(--x2), var(--y2), 0); }
+  42.85% { transform: translate3d(var(--x3), var(--y3), 0); }
+  57.14% { transform: translate3d(var(--x4), var(--y4), 0); }
+  71.42% { transform: translate3d(var(--x5), var(--y5), 0); }
+  85.71% { transform: translate3d(var(--x6), var(--y6), 0); }
+  100% { transform: translate3d(var(--x7), var(--y7), 0); }
+}
+@keyframes ff-orbit {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+/* Как в оригинале: короткая вспышка и долгая темнота. */
+@keyframes ff-flash {
+  0%, 30%, 100% { opacity: 0.06; transform: scale(0.5); }
+  5% { opacity: 1; transform: scale(1); }
 }
 
 /* --- Кнопка и выбор фона ------------------------------------------------ */
@@ -1942,7 +2059,7 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 }
 .bd-menu[hidden] { display: none; }
 .bd-menu-title { margin: 0 2px 8px; color: var(--text-2); font-size: 12px; font-weight: 600; }
-.bd-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.bd-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .bd-option {
   display: flex;
   flex-direction: column;
@@ -1960,7 +2077,7 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 .bd-swatch {
   position: relative;
   display: block;
-  height: 54px;
+  height: 48px;
   border: 1px solid var(--hair-strong);
   border-radius: 8px;
   overflow: hidden;
@@ -1986,3 +2103,18 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 .bd-swatch-particles i:nth-child(3) { left: 66%; top: 62%; transform: scale(2.2); }
 .bd-swatch-particles i:nth-child(4) { left: 82%; top: 18%; transform: scale(0.8); }
 .bd-swatch-particles i:nth-child(5) { left: 28%; top: 82%; transform: scale(0.9); }
+.bd-swatch-forest {
+  background:
+    linear-gradient(90deg, transparent 0 14%, #0a1716 14% 20%, transparent 20% 46%, #102321 46% 50%, transparent 50% 74%, #08110f 74% 82%, transparent 82%),
+    radial-gradient(80% 70% at 50% 30%, #5f8f80, #071314 75%);
+}
+.bd-swatch-forest i {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(#fffcdc 0 10%, rgba(255, 222, 89, 0.9) 18%, transparent 65%);
+}
+.bd-swatch-forest i:nth-child(1) { left: 30%; top: 58%; }
+.bd-swatch-forest i:nth-child(2) { left: 62%; top: 30%; transform: scale(0.7); }
+.bd-swatch-forest i:nth-child(3) { left: 80%; top: 70%; transform: scale(1.3); }

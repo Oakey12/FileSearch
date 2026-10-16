@@ -7,7 +7,7 @@
   <!-- Светлая тема ставится до первой отрисовки, чтобы окно не мигало тёмным. Ключ — THEME_KEY в theme.ts. -->
   <script>try { if (localStorage.getItem('theme') === 'light') document.documentElement.dataset.theme = 'light' } catch (e) {}</script>
   <!-- Фон «Частицы» — тоже до отрисовки: от него зависит прозрачность панелей. Ключ — BACKDROP_KEY в backdrop.ts. -->
-  <script>try { if (localStorage.getItem('backdrop') === 'particles') document.documentElement.dataset.backdrop = 'particles' } catch (e) {}</script>
+  <script>try { var b = localStorage.getItem('backdrop'); if (b === 'particles' || b === 'forest') document.documentElement.dataset.backdrop = b } catch (e) {}</script>
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -44,8 +44,15 @@
   </svg>
 
   <div class="backdrop" aria-hidden="true">
-    <div class="bd-sky"><i class="bd-blob bd-blob-1"></i><i class="bd-blob bd-blob-2"></i><i class="bd-blob bd-blob-3"></i></div>
-    <div class="bd-particles" id="bdParticles"></div>
+    <div class="bd-scene bd-scene-particles">
+      <div class="bd-sky"><i class="bd-blob bd-blob-1"></i><i class="bd-blob bd-blob-2"></i><i class="bd-blob bd-blob-3"></i></div>
+      <div class="bd-particles" id="bdParticles"></div>
+    </div>
+    <div class="bd-scene bd-scene-forest" id="bdForestScene">
+      <div class="bd-forest" id="bdForest"></div>
+      <div class="bd-fog"></div>
+      <div class="bd-fireflies" id="bdFireflies"></div>
+    </div>
   </div>
 
   <div class="app" id="app">
@@ -106,6 +113,9 @@
               </button>
               <button class="bd-option" type="button" role="radio" data-backdrop="particles" aria-checked="false">
                 <span class="bd-swatch bd-swatch-particles"><i></i><i></i><i></i><i></i><i></i></span><span>Частицы</span>
+              </button>
+              <button class="bd-option" type="button" role="radio" data-backdrop="forest" aria-checked="false">
+                <span class="bd-swatch bd-swatch-forest"><i></i><i></i><i></i></span><span>Лес</span>
               </button>
             </div>
           </div>
