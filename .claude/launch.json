@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "wails-dev",
+      "runtimeExecutable": "C:/Users/Oakey/go/bin/wails.exe",
+      "runtimeArgs": ["dev", "-skipbindings"],
+      "port": 34115
+    }
+  ]
+}

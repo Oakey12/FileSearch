@@ -54,7 +54,7 @@ func main() {
 	}
 
 	err := wails.Run(&options.App{
-		Title:            "Поиск файлов",
+		Title:            "Главная",
 		Width:            1180,
 		Height:           740,
 		MinWidth:         760,
