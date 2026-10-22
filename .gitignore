@@ -5,3 +5,6 @@ release/
 build/bin/
 frontend/node_modules/
 frontend/package.json.md5
+
+# Локальные настройки редактора и сессий, не для репозитория
+.claude/
