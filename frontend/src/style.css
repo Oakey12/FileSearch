@@ -739,6 +739,41 @@ svg { flex: none; }
 .sheet-error:empty { display: none; }
 .sheet-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
+/* --- Удалённый ПК ---------------------------------------------------- */
+
+.field { display: block; margin: 0 0 10px; }
+.field > span { display: block; margin: 0 0 4px; color: var(--text-2); font-size: 12px; }
+.field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border: 1px solid var(--hair-strong);
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+}
+.field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.remote-disks { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 6px; }
+.remote-disk {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--hair-strong);
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.remote-disk:hover { background: var(--raised-hover); }
+.remote-disk-name { font-weight: 600; }
+.remote-disk-info { color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+
 /* --- Уведомление ----------------------------------------------------- */
 
 .toast {

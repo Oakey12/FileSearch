@@ -3,7 +3,7 @@ import * as Go from '../wailsjs/go/main/App'
 import { EventsOn, OnFileDrop, WindowSetBackgroundColour, WindowSetDarkTheme, WindowSetLightTheme } from '../wailsjs/runtime/runtime'
 import { Decoder, isOneCFile } from './decoder'
 import { Drawer } from './drawer'
-import { baseName, collator, formatCount, kindOf, plural, seconds } from './format'
+import { baseName, collator, formatCount, formatSize, kindOf, plural, seconds } from './format'
 import { parseTerms } from './highlight'
 import { Inspector, type PreviewResult } from './inspector'
 import { VirtualList, type FileItem } from './list'
@@ -543,6 +543,90 @@ sheetConfirm.addEventListener('click', async () => {
     sheetConfirm.disabled = sheetCancel.disabled = false
   }
 })
+
+// --- Удалённый ПК: IP → диски → выбор диска → обычный поиск ---------------
+
+interface RemoteDisk { letter: string; path: string; total: number; free: number }
+
+const remoteSheet = byId<HTMLDialogElement>('remoteSheet')
+const remoteForm = byId<HTMLFormElement>('remoteForm')
+const remoteIp = byId<HTMLInputElement>('remoteIp')
+const remoteUser = byId<HTMLInputElement>('remoteUser')
+const remotePass = byId<HTMLInputElement>('remotePass')
+const remoteError = byId<HTMLParagraphElement>('remoteError')
+const remoteSubmit = byId<HTMLButtonElement>('remoteSubmit')
+const remoteBack = byId<HTMLButtonElement>('remoteBack')
+const remoteStepConnect = byId<HTMLDivElement>('remoteStepConnect')
+const remoteStepDisks = byId<HTMLDivElement>('remoteStepDisks')
+const remoteDisksList = byId<HTMLUListElement>('remoteDisks')
+
+function remoteShowStep(disks: boolean): void {
+  remoteStepConnect.hidden = disks
+  remoteStepDisks.hidden = !disks
+  remoteSubmit.hidden = disks
+  remoteBack.hidden = !disks
+  remoteError.textContent = ''
+}
+
+function openRemoteSheet(): void {
+  remotePass.value = ''
+  remoteShowStep(false)
+  remoteSubmit.disabled = false
+  remoteSubmit.textContent = 'Сканировать диски'
+  remoteSheet.showModal()
+  remoteIp.focus()
+}
+
+function renderRemoteDisks(ip: string, disks: RemoteDisk[]): void {
+  byId('remoteDisksText').textContent = `Диски на ${ip}. Выберите, где искать файл.`
+  const nodes = disks.map((d) => {
+    const li = document.createElement('li')
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'remote-disk'
+    const name = document.createElement('span')
+    name.className = 'remote-disk-name'
+    name.textContent = `Диск ${d.letter}:`
+    const info = document.createElement('span')
+    info.className = 'remote-disk-info'
+    info.textContent = d.total > 0 ? `свободно ${formatSize(d.free)} из ${formatSize(d.total)}` : ''
+    btn.append(name, info)
+    btn.addEventListener('click', () => {
+      remoteSheet.close()
+      setRoot(d.path, false)
+      queryInput.focus()
+      toast(`Ищу на ${ip}, диск ${d.letter}: введите имя файла`)
+    })
+    li.append(btn)
+    return li
+  })
+  remoteDisksList.replaceChildren(...nodes)
+}
+
+remoteForm.addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const ip = remoteIp.value.trim()
+  remoteError.textContent = ''
+  remoteSubmit.disabled = true
+  remoteSubmit.textContent = 'Сканирую…'
+  try {
+    const disks = (await Go.RemoteScan(ip, remoteUser.value.trim(), remotePass.value)) as RemoteDisk[]
+    remotePass.value = ''
+    renderRemoteDisks(ip, disks)
+    remoteShowStep(true)
+    remoteDisksList.querySelector<HTMLButtonElement>('button')?.focus()
+  } catch (err) {
+    remoteError.textContent = errorText(err)
+  } finally {
+    remoteSubmit.disabled = false
+    remoteSubmit.textContent = 'Сканировать диски'
+  }
+})
+
+remoteBack.addEventListener('click', () => { remoteShowStep(false); remoteIp.focus() })
+byId('remoteCancel').addEventListener('click', () => remoteSheet.close())
+remoteSheet.addEventListener('close', () => { remotePass.value = '' })
+byId('remoteOpen').addEventListener('click', openRemoteSheet)
 
 // --- Тема: тёмная или светлая --------------------------------------------
 

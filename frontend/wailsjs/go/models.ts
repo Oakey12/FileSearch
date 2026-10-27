@@ -266,3 +266,26 @@ export namespace preview {
 
 }
 
+export namespace remote {
+	
+	export class Disk {
+	    letter: string;
+	    path: string;
+	    total: number;
+	    free: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Disk(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.letter = source["letter"];
+	        this.path = source["path"];
+	        this.total = source["total"];
+	        this.free = source["free"];
+	    }
+	}
+
+}
+

@@ -15,6 +15,7 @@ import (
 
 	"file-search/internal/content"
 	"file-search/internal/preview"
+	"file-search/internal/remote"
 	"file-search/internal/search"
 	"file-search/internal/settings"
 	"file-search/internal/shell"
@@ -161,6 +162,28 @@ func (a *App) CancelSearch() {
 		a.cancelSearch()
 		a.cancelSearch = nil
 	}
+}
+
+// --- Удалённый компьютер -------------------------------------------------
+
+// RemoteScan подключается к компьютеру по IP под учётной записью администратора
+// (пустое имя — текущий вход Windows) и возвращает его диски. Выбранный диск
+// интерфейс подставляет как папку поиска (\\ip\C$), дальше работает обычный Search.
+// Пароль нигде не сохраняется.
+func (a *App) RemoteScan(ip, user, password string) ([]remote.Disk, error) {
+	host, err := remote.ParseHost(ip)
+	if err != nil {
+		return nil, err
+	}
+	if err := remote.Connect(host, strings.TrimSpace(user), password); err != nil {
+		return nil, err
+	}
+	disks, err := remote.ScanDisks(a.ctx, host)
+	if err != nil {
+		remote.Disconnect(host)
+		return nil, err
+	}
+	return disks, nil
 }
 
 // --- Действия с файлом -------------------------------------------------
