@@ -3,6 +3,7 @@
 import {main} from '../models';
 import {onec} from '../models';
 import {preview} from '../models';
+import {remote} from '../models';
 
 export function CancelSearch():Promise<void>;
 
@@ -27,6 +28,8 @@ export function PickOneCFile():Promise<string>;
 export function Preview(arg1:string):Promise<preview.Result>;
 
 export function RecentFolders():Promise<Array<string>>;
+
+export function RemoteScan(arg1:string,arg2:string,arg3:string):Promise<Array<remote.Disk>>;
 
 export function SaveNotes(arg1:string,arg2:string):Promise<void>;
 

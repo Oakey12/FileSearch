@@ -8,8 +8,8 @@
   <script>try { if (localStorage.getItem('theme') === 'light' && localStorage.getItem('backdrop') !== 'forest') document.documentElement.dataset.theme = 'light' } catch (e) {}</script>
   <!-- Фон «Частицы» — тоже до отрисовки: от него зависит прозрачность панелей. Ключ — BACKDROP_KEY в backdrop.ts. -->
   <script>try { var b = localStorage.getItem('backdrop'); if (b === 'particles' || b === 'forest') document.documentElement.dataset.backdrop = b } catch (e) {}</script>
-  <script type="module" crossorigin src="/assets/index-Cd8dg0Z4.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DosT6_hb.css">
+  <script type="module" crossorigin src="/assets/index-D9dfr2W7.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-Cb2iwE3d.css">
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -42,7 +42,8 @@
     <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.9" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.6v1.5M8 12.9v1.5M1.6 8h1.5M12.9 8h1.5M3.5 3.5l1 1M11.5 11.5l1 1M3.5 12.5l1-1M11.5 4.5l1-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
     <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13.4 9.9A5.9 5.9 0 0 1 6.1 2.6a5.9 5.9 0 1 0 7.3 7.3Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
     <symbol id="i-sparkle" viewBox="0 0 16 16"><path d="M6.5 2.5 7.6 5.9a1 1 0 0 0 .6.6l3.4 1.1-3.4 1.1a1 1 0 0 0-.6.6L6.5 12.7 5.4 9.3a1 1 0 0 0-.6-.6L1.4 7.6l3.4-1.1a1 1 0 0 0 .6-.6Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M12.2 1.8v2.6M10.9 3.1h2.6M12.4 10.6v2.2M11.3 11.7h2.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
-    <symbol id="i-minus" viewBox="0 0 16 16"><path d="M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-pc" viewBox="0 0 16 16"><rect x="1.75" y="2.25" width="12.5" height="8.5" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.5 13.75h5M8 10.75v3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="i-minus"viewBox="0 0 16 16"><path d="M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
   </svg>
 
   <div class="backdrop" aria-hidden="true">
@@ -86,6 +87,21 @@
                 <svg class="side-icon"><use href="#i-plus"/></svg><span>Открыть файл 1С…</span>
               </button>
               <ul class="recent" id="onecRecent"></ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="side-section" data-section="remote">
+          <h2 class="side-head-wrap">
+            <button class="side-head" type="button" aria-expanded="true" aria-controls="remoteBody">
+              <svg class="side-chevron"><use href="#i-disclosure"/></svg><span>Удалённый ПК</span>
+            </button>
+          </h2>
+          <div class="side-body" id="remoteBody">
+            <div class="side-body-inner">
+              <button class="side-item side-pick" id="remoteOpen" type="button" title="Найти файл на диске другого компьютера по IP (нужны права администратора)">
+                <svg class="side-icon"><use href="#i-pc"/></svg><span>Поиск по IP…</span>
+              </button>
             </div>
           </div>
         </section>
@@ -306,6 +322,34 @@
     </form>
   </dialog>
 
-  <div class="toast" id="toast" role="alert" hidden><span id="toastText"></span><button class="link-btn toast-action" id="toastAction" type="button" hidden></button></div>
+  <dialog class="sheet" id="remoteSheet" aria-labelledby="remoteTitle">
+    <form class="sheet-body" id="remoteForm" autocomplete="off">
+      <h2 class="sheet-title" id="remoteTitle">Поиск на удалённом ПК</h2>
+      <div id="remoteStepConnect">
+        <p class="sheet-text">Введите адрес компьютера и данные администратора. Программа проверит, какие на нём есть диски.</p>
+        <label class="field"><span>IP-адрес</span>
+          <input id="remoteIp" type="text" inputmode="decimal" placeholder="192.168.150.7" spellcheck="false" required>
+        </label>
+        <label class="field"><span>Администратор</span>
+          <input id="remoteUser" type="text" placeholder="ПК\Администратор (пусто — текущий вход Windows)" spellcheck="false">
+        </label>
+        <label class="field"><span>Пароль</span>
+          <input id="remotePass" type="password" spellcheck="false">
+        </label>
+      </div>
+      <div id="remoteStepDisks" hidden>
+        <p class="sheet-text" id="remoteDisksText"></p>
+        <ul class="remote-disks" id="remoteDisks"></ul>
+      </div>
+      <p class="sheet-error" id="remoteError" role="alert"></p>
+      <div class="sheet-actions">
+        <button class="btn" type="button" id="remoteCancel">Отмена</button>
+        <button class="btn" type="button" id="remoteBack" hidden>Назад</button>
+        <button class="btn btn-primary" type="submit" id="remoteSubmit">Сканировать диски</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="alert" hidden><span id="toastText"></span><button class="link-btn toast-action" id="toastAction" type="button" hidden></button></div>
 </body>
 </html>

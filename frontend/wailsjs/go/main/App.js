@@ -50,6 +50,10 @@ export function RecentFolders() {
   return window['go']['main']['App']['RecentFolders']();
 }
 
+export function RemoteScan(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RemoteScan'](arg1, arg2, arg3);
+}
+
 export function SaveNotes(arg1, arg2) {
   return window['go']['main']['App']['SaveNotes'](arg1, arg2);
 }
