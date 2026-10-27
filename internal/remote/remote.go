@@ -52,16 +52,23 @@ func ScanDisks(ctx context.Context, host string) ([]Disk, error) {
 	defer cancel()
 
 	var (
-		mu    sync.Mutex
-		found []Disk
-		wg    sync.WaitGroup
+		mu       sync.Mutex
+		found    []Disk
+		firstErr error
+		wg       sync.WaitGroup
 	)
 	for c := 'A'; c <= 'Z'; c++ {
 		wg.Add(1)
 		go func(letter string) {
 			defer wg.Done()
 			path := SharePath(host, letter)
-			if !exists(ctx, path+`\`) {
+			if err := probe(ctx, path+`\`); err != nil {
+				mu.Lock()
+				// Запоминаем самую показательную ошибку: «нет такой шары» менее важна, чем «доступ запрещён».
+				if firstErr == nil || (os.IsNotExist(firstErr) && !os.IsNotExist(err)) {
+					firstErr = err
+				}
+				mu.Unlock()
 				return
 			}
 			d := Disk{Letter: letter, Path: path}
@@ -86,22 +93,36 @@ func ScanDisks(ctx context.Context, host string) ([]Disk, error) {
 	out := append([]Disk(nil), found...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Letter < out[j].Letter })
 	if len(out) == 0 {
-		return nil, fmt.Errorf("на %s не найдено доступных дисков: нужна учётная запись администратора и включённые общие ресурсы C$", host)
+		return nil, noDisksError(host, firstErr)
 	}
 	return out, nil
 }
 
-// exists проверяет путь, не дожидаясь зависшего сетевого вызова дольше ctx.
-func exists(ctx context.Context, path string) bool {
-	ok := make(chan bool, 1)
+// probe проверяет путь, не дожидаясь зависшего сетевого вызова дольше ctx.
+func probe(ctx context.Context, path string) error {
+	res := make(chan error, 1)
 	go func() {
 		_, err := os.Stat(path)
-		ok <- err == nil
+		res <- err
 	}()
 	select {
-	case v := <-ok:
-		return v
+	case err := <-res:
+		return err
 	case <-ctx.Done():
-		return false
+		return ctx.Err()
 	}
+}
+
+// noDisksError объясняет, почему ни один диск не открылся.
+func noDisksError(host string, err error) error {
+	switch {
+	case err == nil || os.IsNotExist(err):
+		return fmt.Errorf("на %s не найдено дисков: административные общие ресурсы (C$) отключены", host)
+	case os.IsPermission(err):
+		return fmt.Errorf("%s: доступ к C$ запрещён. Укажите администратора с именем компьютера или домена (ИМЯ-ПК\\admin, ДОМЕН\\admin), "+
+			"а для локальной учётной записи вне домена включите на целевом ПК LocalAccountTokenFilterPolicy=1", host)
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("%s не ответил вовремя: проверьте сеть и брандмауэр (порт 445)", host)
+	}
+	return fmt.Errorf("на %s не удалось открыть диски: %v", host, err)
 }
