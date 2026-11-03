@@ -147,7 +147,7 @@ func (a *App) Search(id int, root, query string, inContent bool) {
 			done.Canceled = true
 		case err != nil:
 			done.Error = err.Error()
-		default:
+		case !remote.IsAdminShare(root): // шара чужого ПК живёт только до закрытия сеанса
 			a.recent.Add(root)
 		}
 		runtime.EventsEmit(a.ctx, "search:done", done)

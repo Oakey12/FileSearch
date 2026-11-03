@@ -110,13 +110,20 @@ document.querySelectorAll<HTMLButtonElement>('.side-head').forEach((head) => {
 
 // --- Папка поиска ------------------------------------------------------
 
+// Папка по умолчанию, пока пользователь не выбрал другую.
+const DEFAULT_ROOT = 'C:\\'
+
+// \\192.168.150.7\C$ — административная шара чужого компьютера (см. remote.IsAdminShare).
+const isRemoteShare = (dir: string) => /^\\\\\d{1,3}(\.\d{1,3}){3}\\[A-Z]\$(\\.*)?$/i.test(dir)
+
 function setRoot(dir: string, runNow = true): void {
   if (mode !== 'search') setMode('search')
   root = dir
   scopeName.textContent = dir ? baseName(dir) : 'Выберите папку'
   scopeButton.title = dir || 'Папка для поиска'
   scopeButton.classList.toggle('scope-empty', !dir)
-  store.set('root', dir)
+  // Диск чужого ПК (\\ip\C$) живёт только пока открыт сеанс — по умолчанию его не запоминаем.
+  if (!isRemoteShare(dir)) store.set('root', dir)
   markActiveRecent()
   if (runNow && queryInput.value.trim()) startSearch(true)
   else updateEmpty()
@@ -829,7 +836,8 @@ async function patiently<T>(call: () => Promise<T>): Promise<T> {
 async function init(): Promise<void> {
   setInspectorOpen(store.get('inspector') !== '0')
   setTextMode(textMode)
-  setRoot(store.get('root') || '', false)
+  const saved = store.get('root')
+  setRoot(saved && !isRemoteShare(saved) ? saved : DEFAULT_ROOT, false)
   updateStatus()
   queryInput.focus()
 
