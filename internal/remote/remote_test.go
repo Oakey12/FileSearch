@@ -21,3 +21,16 @@ func TestSharePath(t *testing.T) {
 		t.Errorf("SharePath = %q", got)
 	}
 }
+
+func TestIsAdminShare(t *testing.T) {
+	for _, p := range []string{`\\10.0.0.1\C$`, `\\192.168.150.7\d$\Users`} {
+		if !IsAdminShare(p) {
+			t.Errorf("IsAdminShare(%q) = false", p)
+		}
+	}
+	for _, p := range []string{`C:\`, `\\server\share`, `\\10.0.0.1\Docs`, `\\10.0.0.1\C$x`} {
+		if IsAdminShare(p) {
+			t.Errorf("IsAdminShare(%q) = true", p)
+		}
+	}
+}
