@@ -2125,37 +2125,3 @@ body.resizing-card, body.resizing-card * { cursor: nwse-resize !important; user-
 
 /* ---------- Рыжий кот ---------- */
 .cat-btn + .theme-btn { margin-left: 0; }
-
-.cat-mode {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg);
-  user-select: none;
-}
-.cat-mode[hidden] { display: none; }
-.cat-mode.poof { animation: cat-poof 0.45s steps(5) both; }
-@keyframes cat-poof {
-  from { opacity: 0; transform: scale(0.6); filter: blur(4px); }
-  to { opacity: 1; transform: none; filter: none; }
-}
-.cat-stage {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  place-items: center;
-  padding: 8px;
-}
-.cat-stage canvas { image-rendering: pixelated; }
-.cat-bar {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 0 12px 12px;
-}
-.cat-commands { display: flex; gap: 8px; }
-.cat-commands .btn[aria-pressed="true"] { border-color: transparent; background: var(--accent); color: #fff; }
-.cat-hint { margin: 0; font-size: 11px; color: var(--text-2); }

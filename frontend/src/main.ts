@@ -10,7 +10,6 @@ import { VirtualList, type FileItem } from './list'
 import { WINDOW_BG, currentTheme, loadTheme, saveTheme, switchTheme, type Theme } from './theme'
 import { applyBackdrop, currentBackdrop, mountForest, mountParticles, saveBackdrop, watchSmoothness, type Backdrop } from './backdrop'
 import { toast } from './toast'
-import { mountCat } from './cat'
 
 // --- События из Go ------------------------------------------------------
 
@@ -638,7 +637,10 @@ byId('remoteOpen').addEventListener('click', openRemoteSheet)
 
 // --- Рыжий кот ------------------------------------------------------------
 
-mountCat(byId<HTMLButtonElement>('catButton'))
+// Кот — отдельное прозрачное окно (cat.html); окно поиска прячется, пока он гуляет.
+byId('catButton').addEventListener('click', () => {
+  Go.TurnIntoCat().catch((err) => toast(String(err)))
+})
 
 // --- Тема: тёмная или светлая --------------------------------------------
 

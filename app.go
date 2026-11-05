@@ -52,6 +52,9 @@ type App struct {
 	release  *update.Release
 
 	onec onecCache // последний открытый файл 1С — общий для декодера и предпросмотра
+
+	catMu sync.Mutex
+	catOn bool // кот сейчас бегает по экрану, окно поиска спрятано
 }
 
 const maxFiles = 32

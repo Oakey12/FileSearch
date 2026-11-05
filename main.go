@@ -47,6 +47,12 @@ func savedTheme() string {
 }
 
 func main() {
+	if isCatProcess() {
+		if err := runCat(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	app := NewApp()
 	background, theme := windowBackground, windows.Dark
 	if savedTheme() == "light" {
