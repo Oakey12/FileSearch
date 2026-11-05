@@ -37,6 +37,7 @@ const (
 // прятать поиск) и анимация открытия дошла до места окна (можно показывать поиск).
 const (
 	catReady = "cat:ready"
+	catTitle = "Рыжик" // заголовок окна кота; по нему cutOutBackground находит окно
 	catOpen  = "cat:open"
 )
 
@@ -178,20 +179,23 @@ func catPage(next http.Handler) http.Handler {
 func runCat() error {
 	app := NewApp()
 	return wails.Run(&options.App{
-		Title:            "Рыжик",
+		Title:            catTitle,
 		Width:            catWidth,
 		Height:           catHeight,
 		Frameless:        true,
 		DisableResize:    true,
 		AlwaysOnTop:      true,
-		StartHidden:      true, // окно показывает cat.ts, когда поставит кота на место
-		BackgroundColour: &options.RGBA{},
+		StartHidden:      true,                                                    // окно показывает cat.ts, когда поставит кота на место
+		BackgroundColour: &options.RGBA{R: colorKeyR, G: colorKeyG, B: colorKeyB}, // на Windows до 11 этот цвет вырезается (cutOutBackground)
 		AssetServer:      &assetserver.Options{Assets: assets, Middleware: catPage},
 		OnStartup: func(ctx context.Context) {
 			app.ctx = ctx
 			go quitWithParent(ctx)
 		},
 		OnDomReady: func(ctx context.Context) {
+			if !supportsBackdrop() {
+				cutOutBackground(catTitle)
+			}
 			fmt.Println(catReady)
 			// Страховка: если интерфейс не показал окно сам, кот не должен пропасть вместе с поиском.
 			time.AfterFunc(3*time.Second, func() { runtime.WindowShow(ctx) })
@@ -199,6 +203,9 @@ func runCat() error {
 		Bind: []any{app},
 		Windows: &windows.Options{
 			WebviewIsTransparent: true,
+			// Старые Windows (7, Server 2008–2012): аппаратная графика в layered-окне рисуется
+			// чёрной, поэтому для кота включаем программную отрисовку.
+			WebviewGpuIsDisabled: !supportsBackdrop(),
 			// Только на Windows 11 22621+: на старых версиях Wails включает размытие фона за окном.
 			WindowIsTranslucent:               supportsBackdrop(),
 			BackdropType:                      windows.None,
