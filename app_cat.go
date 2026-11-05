@@ -198,8 +198,9 @@ func runCat() error {
 		},
 		Bind: []any{app},
 		Windows: &windows.Options{
-			WebviewIsTransparent:              true,
-			WindowIsTranslucent:               true,
+			WebviewIsTransparent: true,
+			// Только на Windows 11 22621+: на старых версиях Wails включает размытие фона за окном.
+			WindowIsTranslucent:               supportsBackdrop(),
 			BackdropType:                      windows.None,
 			DisableFramelessWindowDecorations: true,
 			DisablePinchZoom:                  true,
