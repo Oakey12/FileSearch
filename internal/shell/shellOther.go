@@ -13,7 +13,3 @@ func ShowInExplorer(path string) (bool, error) {
 func OpenFile(path string) error {
 	return errUnsupported
 }
-
-func WorkArea() (width, height int) {
-	return 0, 0
-}

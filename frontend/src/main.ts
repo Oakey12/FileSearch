@@ -637,7 +637,7 @@ byId('remoteOpen').addEventListener('click', openRemoteSheet)
 
 // --- Рыжий кот ------------------------------------------------------------
 
-// Кот — отдельное прозрачное окно (cat.html); окно поиска прячется, пока он гуляет.
+// Кот — отдельный процесс с окном без фона (пакет catwin); окно поиска прячется, пока он гуляет.
 byId('catButton').addEventListener('click', () => {
   Go.TurnIntoCat().catch((err) => toast(String(err)))
 })

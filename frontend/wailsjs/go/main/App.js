@@ -6,14 +6,6 @@ export function CancelSearch() {
   return window['go']['main']['App']['CancelSearch']();
 }
 
-export function CatOpened() {
-  return window['go']['main']['App']['CatOpened']();
-}
-
-export function CatSetup() {
-  return window['go']['main']['App']['CatSetup']();
-}
-
 export function CheckUpdate() {
   return window['go']['main']['App']['CheckUpdate']();
 }
