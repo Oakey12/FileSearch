@@ -7,6 +7,10 @@ import {remote} from '../models';
 
 export function CancelSearch():Promise<void>;
 
+export function CatOpened():Promise<void>;
+
+export function CatSetup():Promise<main.CatSetup>;
+
 export function CheckUpdate():Promise<main.UpdateInfo>;
 
 export function ForgetFolder(arg1:string):Promise<Array<string>>;
@@ -44,5 +48,7 @@ export function SaveWindowTheme(arg1:string):Promise<void>;
 export function Search(arg1:number,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
 export function ShowInExplorer(arg1:string):Promise<void>;
+
+export function TurnIntoCat():Promise<void>;
 
 export function Version():Promise<string>;

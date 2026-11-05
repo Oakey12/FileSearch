@@ -6,6 +6,14 @@ export function CancelSearch() {
   return window['go']['main']['App']['CancelSearch']();
 }
 
+export function CatOpened() {
+  return window['go']['main']['App']['CatOpened']();
+}
+
+export function CatSetup() {
+  return window['go']['main']['App']['CatSetup']();
+}
+
 export function CheckUpdate() {
   return window['go']['main']['App']['CheckUpdate']();
 }
@@ -80,6 +88,10 @@ export function Search(arg1, arg2, arg3, arg4) {
 
 export function ShowInExplorer(arg1) {
   return window['go']['main']['App']['ShowInExplorer'](arg1);
+}
+
+export function TurnIntoCat() {
+  return window['go']['main']['App']['TurnIntoCat']();
 }
 
 export function Version() {
