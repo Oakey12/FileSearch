@@ -1,27 +1,5 @@
 export namespace main {
 	
-	export class CatSetup {
-	    width: number;
-	    height: number;
-	    appWidth: number;
-	    appHeight: number;
-	    maximised: boolean;
-	    light: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new CatSetup(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.width = source["width"];
-	        this.height = source["height"];
-	        this.appWidth = source["appWidth"];
-	        this.appHeight = source["appHeight"];
-	        this.maximised = source["maximised"];
-	        this.light = source["light"];
-	    }
-	}
 	export class UpdateInfo {
 	    available: boolean;
 	    current: string;

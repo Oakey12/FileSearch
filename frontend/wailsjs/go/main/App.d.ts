@@ -7,10 +7,6 @@ import {remote} from '../models';
 
 export function CancelSearch():Promise<void>;
 
-export function CatOpened():Promise<void>;
-
-export function CatSetup():Promise<main.CatSetup>;
-
 export function CheckUpdate():Promise<main.UpdateInfo>;
 
 export function ForgetFolder(arg1:string):Promise<Array<string>>;

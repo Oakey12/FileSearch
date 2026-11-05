@@ -2,42 +2,30 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"slices"
 	"strings"
-	"time"
 
-	"file-search/internal/shell"
+	"file-search/internal/catwin"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// Рыжий кот — тот же exe, запущенный с ключом --cat: прозрачное окно без рамки
-// поверх всех окон, в котором виден только сам кот. Окно поиска на это время
-// прячется и возвращается в центр экрана, когда процесс кота завершится.
+// Рыжий кот — тот же exe, запущенный с ключом --cat: окно без фона и рамки поверх
+// всех окон, в котором виден только сам кот (см. пакет catwin — это обычное окно Win32
+// с попиксельной прозрачностью, оно не зависит от WebView и работает и на Windows 7).
+// Окно поиска на это время прячется и возвращается в центр экрана, когда процесс кота
+// завершится.
 
 const catFlag = "--cat"
 
-// Размер окна кота в точках интерфейса (как CSS-пиксели), см. VIEW_* в cat.ts.
-const (
-	catWidth  = 360
-	catHeight = 220
-)
-
 // Строки, которые процесс кота печатает главному окну: кот нарисовался (можно
-// прятать поиск) и анимация открытия дошла до места окна (можно показывать поиск).
+// прятать поиск) и пользователь вызвал окно поиска двойным кликом (можно показывать).
 const (
 	catReady = "cat:ready"
-	catTitle = "Рыжик" // заголовок окна кота; по нему cutOutBackground находит окно
 	catOpen  = "cat:open"
 )
 
@@ -56,16 +44,7 @@ func (a *App) TurnIntoCat() error {
 	if err != nil {
 		return fmt.Errorf("не удалось превратиться в кота: %w", err)
 	}
-	w, h := runtime.WindowGetSize(a.ctx)
-	args := []string{catFlag, fmt.Sprintf("--app=%dx%d", w, h)}
-	if runtime.WindowIsMaximised(a.ctx) {
-		args = append(args, "--max")
-	}
-	if savedTheme() == "light" {
-		args = append(args, "--light")
-	}
-	cmd := exec.Command(exe, args...)
-	cmd.Env = catEnv(os.Environ())
+	cmd := exec.Command(exe, catFlag)
 	// Кот живёт, пока открыт его stdin: если главное окно упадёт, кот уйдёт следом.
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -97,7 +76,7 @@ func (a *App) TurnIntoCat() error {
 		a.catMu.Lock()
 		a.catOn = false
 		a.catMu.Unlock()
-		a.showFromCat() // если кот закрылся без анимации (упал, сняли задачу)
+		a.showFromCat() // если кот закрылся без двойного клика (упал, сняли задачу)
 	}()
 	return nil
 }
@@ -112,115 +91,24 @@ func (a *App) showFromCat() {
 	runtime.WindowUnminimise(a.ctx)
 }
 
-// CatSetup — всё, что нужно окну кота: экран без панели задач (физические пиксели),
-// а для анимации открытия — размер и тема окна поиска.
-func (a *App) CatSetup() CatSetup {
-	s := parseCatArgs(os.Args[1:])
-	s.Width, s.Height = shell.WorkArea()
-	return s
-}
-
-// CatOpened — анимация открытия дошла до места окна поиска: пусть оно появляется.
-func (a *App) CatOpened() {
-	fmt.Println(catOpen)
-}
-
-// CatSetup — параметры окна кота.
-type CatSetup struct {
-	Width     int  `json:"width"`
-	Height    int  `json:"height"`
-	AppWidth  int  `json:"appWidth"`
-	AppHeight int  `json:"appHeight"`
-	Maximised bool `json:"maximised"`
-	Light     bool `json:"light"`
-}
-
-func parseCatArgs(args []string) CatSetup {
-	s := CatSetup{AppWidth: 1180, AppHeight: 740}
-	for _, arg := range args {
-		switch {
-		case arg == "--max":
-			s.Maximised = true
-		case arg == "--light":
-			s.Light = true
-		case strings.HasPrefix(arg, "--app="):
-			var w, h int
-			if n, _ := fmt.Sscanf(strings.TrimPrefix(arg, "--app="), "%dx%d", &w, &h); n == 2 && w > 0 && h > 0 {
-				s.AppWidth, s.AppHeight = w, h
-			}
-		}
-	}
-	return s
-}
-
-// catEnv — окружение для процесса кота. Под wails dev у кота должен быть свой
-// порт dev-сервера, иначе он столкнётся с главным окном.
-func catEnv(env []string) []string {
-	out := make([]string, 0, len(env))
-	for _, kv := range env {
-		if strings.HasPrefix(strings.ToLower(kv), "devserver=") {
-			kv = "devserver=127.0.0.1:34116"
-		}
-		out = append(out, kv)
-	}
-	return out
-}
-
-// catPage подменяет стартовую страницу на cat.html.
-func catPage(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-			r.URL.Path = "/cat.html"
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
+// runCat — процесс кота: показывает окно и сообщает главному окну по stdout,
+// что кот готов и что его позвали обратно.
 func runCat() error {
-	app := NewApp()
-	return wails.Run(&options.App{
-		Title:            catTitle,
-		Width:            catWidth,
-		Height:           catHeight,
-		Frameless:        true,
-		DisableResize:    true,
-		AlwaysOnTop:      true,
-		StartHidden:      true,                                                    // окно показывает cat.ts, когда поставит кота на место
-		BackgroundColour: &options.RGBA{R: colorKeyR, G: colorKeyG, B: colorKeyB}, // на Windows до 11 этот цвет вырезается (cutOutBackground)
-		AssetServer:      &assetserver.Options{Assets: assets, Middleware: catPage},
-		OnStartup: func(ctx context.Context) {
-			app.ctx = ctx
-			go quitWithParent(ctx)
-		},
-		OnDomReady: func(ctx context.Context) {
-			if !supportsBackdrop() {
-				cutOutBackground(catTitle)
-			}
+	return catwin.Run(catwin.Hooks{
+		Ready: func(quit func()) {
 			fmt.Println(catReady)
-			// Страховка: если интерфейс не показал окно сам, кот не должен пропасть вместе с поиском.
-			time.AfterFunc(3*time.Second, func() { runtime.WindowShow(ctx) })
+			go quitWithParent(quit)
 		},
-		Bind: []any{app},
-		Windows: &windows.Options{
-			WebviewIsTransparent: true,
-			// Старые Windows (7, Server 2008–2012): аппаратная графика в layered-окне рисуется
-			// чёрной, поэтому для кота включаем программную отрисовку.
-			WebviewGpuIsDisabled: !supportsBackdrop(),
-			// Только на Windows 11 22621+: на старых версиях Wails включает размытие фона за окном.
-			WindowIsTranslucent:               supportsBackdrop(),
-			BackdropType:                      windows.None,
-			DisableFramelessWindowDecorations: true,
-			DisablePinchZoom:                  true,
-		},
+		Open: func() { fmt.Println(catOpen) },
 	})
 }
 
 // quitWithParent закрывает кота, когда главное окно закрылось (stdin кончился).
 // Если кота запустили вручную, без канала от главного окна, ждать нечего.
-func quitWithParent(ctx context.Context) {
+func quitWithParent(quit func()) {
 	if st, err := os.Stdin.Stat(); err != nil || st.Mode()&os.ModeNamedPipe == 0 {
 		return
 	}
 	_, _ = io.Copy(io.Discard, os.Stdin)
-	runtime.Quit(ctx)
+	quit()
 }
