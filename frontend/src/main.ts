@@ -10,6 +10,7 @@ import { VirtualList, type FileItem } from './list'
 import { WINDOW_BG, currentTheme, loadTheme, saveTheme, switchTheme, type Theme } from './theme'
 import { applyBackdrop, currentBackdrop, mountForest, mountParticles, saveBackdrop, watchSmoothness, type Backdrop } from './backdrop'
 import { toast } from './toast'
+import { mountCat } from './cat'
 
 // --- События из Go ------------------------------------------------------
 
@@ -634,6 +635,10 @@ remoteBack.addEventListener('click', () => { remoteShowStep(false); remoteIp.foc
 byId('remoteCancel').addEventListener('click', () => remoteSheet.close())
 remoteSheet.addEventListener('close', () => { remotePass.value = '' })
 byId('remoteOpen').addEventListener('click', openRemoteSheet)
+
+// --- Рыжий кот ------------------------------------------------------------
+
+mountCat(byId<HTMLButtonElement>('catButton'))
 
 // --- Тема: тёмная или светлая --------------------------------------------
 
