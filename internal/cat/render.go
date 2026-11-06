@@ -83,8 +83,6 @@ func (c *Canvas) Image() *image.NRGBA {
 
 // ---------- позы по состоянию кота ----------
 
-func clamp(x, lo, hi float64) float64 { return math.Max(lo, math.Min(hi, x)) }
-
 func ease(u float64) float64 { return u * u * (3 - 2*u) }
 
 // foot — куда ставится лапа (пиксели спрайта).

@@ -21,7 +21,6 @@ var (
 	cOut      = nrgb(0x4a, 0x22, 0x15) // контур снизу и справа
 	cOutLight = nrgb(0x8c, 0x43, 0x20) // контур сверху и слева
 	cWhite    = nrgb(0xff, 0xff, 0xff)
-	cZzz      = nrgb(0x9c, 0xc8, 0xff)
 )
 
 var palette = map[byte]color.NRGBA{
