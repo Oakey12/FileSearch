@@ -31,10 +31,10 @@ const TicksPerSecond = 20
 var Anchor = struct{ X, Y float64 }{ViewW / 2, 16}
 
 // Scruff — где у висящего кота загривок (в координатах позы).
-var Scruff = struct{ X, Y float64 }{27, 6}
+var Scruff = struct{ X, Y float64 }{32, 0}
 
 // DropHeight — на какой высоте над полом окажутся лапы отпущенного кота.
-var DropHeight = float64(GroundY) - (Anchor.Y - Scruff.Y + 62)
+var DropHeight = float64(GroundY) - (Anchor.Y - Scruff.Y + 56)
 
 // BallSize — размер клубка.
 const BallSize = 10
