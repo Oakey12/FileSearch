@@ -337,26 +337,31 @@ func rot(cx, cy, x, y, a float64) (float64, float64) {
 	return cx + dx*c - dy*s, cy + dx*s + dy*c
 }
 
-func (p *painter) leg(jx, jy float64, f foot, l1, l2, bend float64, far, hind bool) {
+// leg рисует лапу одной цельной формой: бедро, голень и лапка без швов, толстая и
+// мягкая, как у котёнка. Бедро растёт из туловища body: контур там не рисуется.
+func (p *painter) leg(jx, jy float64, f foot, l1, l2, bend float64, far, hind bool, body shape) {
 	fur, cream := furT, creamT
 	if far {
 		fur, cream = furFarT, creamFarT
 	}
 	kx, ky, fx, fy := ik(jx, jy, f.X, f.Y, l1, l2, bend)
+	r0, r1 := 5.2, 4.3 // бедро и голень потолще: пухлая лапка
 	if hind {
-		p.draw(capsule{jx, jy, kx, ky, 5.8, 4.2}, fur, opts{})
-	} else {
-		p.draw(capsule{jx, jy, kx, ky, 4.6, 3.7}, fur, opts{})
+		r0 = 6.6
 	}
-	shin := capsule{kx, ky, fx, fy, 3.7, 3.1}
-	p.draw(shin, fur, opts{over: func(x, y float64, tone int) (color.NRGBA, bool) {
-		t, _ := shin.at(x, y)
-		if t > 0.62 {
+	leg := chain{
+		{jx, jy, kx, ky, r0, r1},
+		{kx, ky, fx, fy, r1, 3.7},
+		{fx - 0.8, fy + 0.2, fx + 3.4, fy + 0.6, 3.4, 3.0}, // лапка смотрит вперёд
+	}
+	p.draw(leg, fur, opts{skipOutline: body, over: func(x, y float64, tone int) (color.NRGBA, bool) {
+		if math.Hypot(x-fx, y-fy) < 5.6 { // белый «носочек» только у самой лапки
 			return cream[tone], true
 		}
 		return color.NRGBA{}, false
 	}})
-	p.draw(ellipse{fx + 1.2, fy + 0.9, 4, 2.3, 0}, cream, opts{})
+	p.dot(fx+2.4, fy+2.4, creamT[2]) // пальчики
+	p.dot(fx+0.6, fy+2.4, creamT[2])
 }
 
 func (p *painter) drawSide(s sideP) {
@@ -375,11 +380,11 @@ func (p *painter) drawSide(s sideP) {
 	// дальние лапы и хвост — за туловищем
 	tx, ty := hip(-4, -4)
 	p.drawTail(s.tail, tx, ty, true)
-	p.leg(hjx+1, hjy, s.hindF, 10, 9.5, -1, true, true)
-	p.leg(sjx, sjy, s.frontF, 10, 9.5, 1, true, false)
+	torso := ellipse{mid[0], mid[1], 17.5, 11, s.pitch}
+	p.leg(hjx+1, hjy, s.hindF, 9, 8.5, -1, true, true, torso)
+	p.leg(sjx, sjy, s.frontF, 9, 8.5, 1, true, false, torso)
 
 	// туловище: широкие полоски по спине, белое брюшко и грудка
-	torso := ellipse{mid[0], mid[1], 18, 10.5, s.pitch}
 	p.draw(torso, furT, opts{over: func(x, y float64, tone int) (color.NRGBA, bool) {
 		u, v := torso.uv(x, y)
 		if v > 0.55 || (u > 0.5 && v > 0.0) {
@@ -392,8 +397,8 @@ func (p *painter) drawSide(s sideP) {
 	}})
 
 	// ближние лапы
-	p.leg(hjx, hjy, s.hindN, 10, 9.5, -1, false, true)
-	p.leg(sjx, sjy, s.frontN, 10, 9.5, 1, false, false)
+	p.leg(hjx, hjy, s.hindN, 9, 8.5, -1, false, true, torso)
+	p.leg(sjx, sjy, s.frontN, 9, 8.5, 1, false, false, torso)
 
 	// голова
 	nx, ny := sh(10+s.headDX, -8+s.headDY)
