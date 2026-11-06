@@ -39,11 +39,10 @@ func TestIdleSequence(t *testing.T) {
 }
 
 func TestIdleEventsHappen(t *testing.T) {
-	c := New(400)
 	seen := map[event]bool{}
 	rnds := []float64{0.1, 0.4, 0.6, 0.8, 0.95}
 	for _, r := range rnds {
-		c = New(400)
+		c := New(400)
 		for i := 0; i < 200 && c.Mode == Sit; i++ {
 			c.Step(func() float64 { return r })
 			seen[c.event] = true
