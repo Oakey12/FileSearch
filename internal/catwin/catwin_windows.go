@@ -100,9 +100,9 @@ const (
 	timerTick  = 1
 	timerClick = 2
 	timerQuit  = 3
-	tickMs     = 100 // 10 тиков в секунду, как в модели
-	clickWait  = 250 // ждём: вдруг это первый клик двойного
-	dragSlop   = 5   // на сколько пикселей надо сдвинуть мышь, чтобы это стало «несением»
+	tickMs     = 1000 / cat.TicksPerSecond // 20 тиков в секунду, как в модели
+	clickWait  = 250                       // ждём: вдруг это первый клик двойного
+	dragSlop   = 5                         // на сколько пикселей надо сдвинуть мышь, чтобы это стало «несением»
 )
 
 type point struct{ X, Y int32 }
@@ -158,7 +158,6 @@ type window struct {
 	cat    *cat.Cat
 	canvas *cat.Canvas
 	k      int // во сколько раз растянут холст
-	cell   int // экранных пикселей в клетке кота
 	winW   int
 	winH   int
 	wa     rect // рабочая область экрана (без панели задач)
@@ -209,7 +208,7 @@ func utf16(s string) *uint16 {
 }
 
 func (w *window) setup() error {
-	// Масштаб экрана: клетка кота — 4 «обычных» пикселя, на 150% экране — 6.
+	// Масштаб экрана: пиксель кота — 2 «обычных» экранных пикселя, на 150% экране — 3.
 	dc, _, _ := pGetDC.Call(0)
 	dpi, _, _ := pGetDeviceCaps.Call(dc, logPixelsX)
 	pReleaseDC.Call(0, dc)
@@ -217,7 +216,6 @@ func (w *window) setup() error {
 		dpi = 96
 	}
 	w.k = max(1, int(math.Round(2*float64(dpi)/96)))
-	w.cell = cat.Fine * w.k
 
 	w.canvas = cat.NewCanvas()
 	w.winW, w.winH = w.canvas.W*w.k, w.canvas.H*w.k
@@ -227,7 +225,7 @@ func (w *window) setup() error {
 		workW, workH = 1024, 768
 		w.wa = rect{0, 0, int32(workW), int32(workH)}
 	}
-	w.cat = cat.New(math.Max(cat.ViewW, math.Floor(float64(workW)/float64(w.cell))))
+	w.cat = cat.New(math.Max(cat.ViewW, math.Floor(float64(workW)/float64(w.k))))
 	w.winY = float64(workH - w.winH)
 	w.view = -1
 
@@ -338,7 +336,7 @@ func (w *window) follow() {
 		return
 	}
 	w.view = left
-	w.winX = w.view * float64(w.cell)
+	w.winX = w.view * float64(w.k)
 }
 
 func (w *window) tick() {
@@ -354,7 +352,7 @@ func (w *window) tick() {
 }
 
 func (w *window) onCat(cx, cy int32) bool {
-	return w.cat.HitCat(w.view+float64(cx)/float64(w.cell), float64(cy)/float64(w.cell)-cat.GroundY)
+	return w.cat.HitCat(w.view+float64(cx)/float64(w.k), float64(cy)/float64(w.k)-cat.GroundY)
 }
 
 func cursor() point {
@@ -367,8 +365,8 @@ func (w *window) startDrag(cx, cy int32, cur point) {
 	pKillTimer.Call(w.hwnd, timerClick)
 	w.cat.Carry()
 	// Взяли за шкирку: окно прыгает так, чтобы загривок оказался под курсором.
-	w.winX += float64(cx) - cat.Anchor.X*float64(w.cell)
-	w.winY += float64(cy) - cat.Anchor.Y*float64(w.cell)
+	w.winX += float64(cx) - cat.Anchor.X*float64(w.k)
+	w.winY += float64(cy) - cat.Anchor.Y*float64(w.k)
 	w.drag = &dragState{winX: w.winX, winY: w.winY, sx: cur.X, sy: cur.Y, lastX: cur.X}
 	w.present()
 }
@@ -388,10 +386,10 @@ func (w *window) endDrag() {
 	w.drag = nil
 	maxY := float64(int(w.wa.Bottom-w.wa.Top) - w.winH)
 	w.winY = math.Max(0, math.Min(maxY, w.winY))
-	w.view = math.Floor(w.winX/float64(w.cell) + 0.5)
+	w.view = math.Floor(w.winX/float64(w.k) + 0.5)
 	w.cat.X = math.Max(0, math.Min(w.cat.Width-cat.SprW, w.view+cat.Anchor.X-cat.SprW/2))
 	w.view = w.viewLeft()
-	w.winX = w.view * float64(w.cell)
+	w.winX = w.view * float64(w.k)
 	w.cat.Drop(cat.DropHeight)
 	w.present()
 }
@@ -416,8 +414,8 @@ func (w *window) showMenu() {
 		pAppendMenu.Call(menu, flags, uintptr(i+1), uintptr(unsafe.Pointer(utf16(it.text))))
 	}
 	// Меню открывается над котом.
-	x := float64(w.wa.Left) + w.winX + (w.cat.X+cat.SprW/2-w.view)*float64(w.cell)
-	y := float64(w.wa.Top) + w.winY + (cat.GroundY-cat.SprH-w.cat.Lift)*float64(w.cell) - 8
+	x := float64(w.wa.Left) + w.winX + (w.cat.X+cat.SprW/2-w.view)*float64(w.k)
+	y := float64(w.wa.Top) + w.winY + (cat.GroundY-cat.SprH-w.cat.Lift)*float64(w.k) - 8
 	pSetForegroundWnd.Call(w.hwnd) // иначе меню не закроется кликом мимо
 	id, _, _ := pTrackPopupMenu.Call(menu, tpmCenterAlign|tpmBottomAlign|tpmReturnCmd, uintptr(int32(x)), uintptr(int32(y)), 0, w.hwnd, 0)
 	pPostMessage.Call(w.hwnd, wmNull, 0, 0)
