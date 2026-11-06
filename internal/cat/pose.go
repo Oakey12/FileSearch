@@ -15,7 +15,7 @@ var (
 	cPupil     = nrgb(0x14, 0x11, 0x0f)
 	cFist      = nrgb(0xf3, 0xd2, 0xb3)
 	cCreamBrow = nrgb(0xff, 0xf0, 0xd0)
-	eyeT       = tones{nrgb(0xb4, 0xee, 0x7c), nrgb(0x86, 0xd6, 0x4f), nrgb(0x3f, 0x8f, 0x2a)}
+	eyeT       = tones{nrgb(0xe6, 0xf6, 0x9c), nrgb(0xb8, 0xdc, 0x50), nrgb(0x6c, 0x9c, 0x24)}
 	collarT    = tones{nrgb(0x5a, 0x9c, 0xf0), nrgb(0x2f, 0x6f, 0xd6), nrgb(0x1f, 0x4f, 0xa8)}
 	bellT      = tones{nrgb(0xff, 0xf0, 0x9a), nrgb(0xff, 0xcc, 0x33), nrgb(0xd9, 0xa0, 0x1a)}
 )
@@ -84,7 +84,7 @@ func (p *painter) drawTail(t tailP, bx, by float64, far bool) {
 
 // ---------- глаза ----------
 
-func (p *painter) eye(ex, ey float64, kind eyeKind, gx, gy float64) {
+func (p *painter) eye(ex, ey float64, kind eyeKind, gx, gy, slant float64) {
 	switch kind {
 	case eyesClosed:
 		for i, dy := range []float64{0, 1, 1.4, 1.4, 1.4, 1, 0} {
@@ -97,25 +97,25 @@ func (p *painter) eye(ex, ey float64, kind eyeKind, gx, gy float64) {
 		}
 		return
 	}
-	rx, ry, pr := 4.0, 4.8, 2.3
+	// Обычный кошачий глаз: миндалевидный, шире, чем высокий, с узким вертикальным
+	// зрачком. slant наклоняет его: внешний уголок выше внутреннего.
+	rx, ry := 3.5, 2.5
+	pw, ph := 0.9, 2.0 // зрачок-щёлка
 	switch kind {
-	case eyesWide:
-		rx, ry, pr = 4.3, 5.2, 3.0
+	case eyesWide: // испуг или азарт: зрачок расширен
+		rx, ry = 3.7, 2.9
+		pw, ph = 1.9, 2.3
 	case eyesSleepy:
-		ry = 3
+		ry = 1.7
+		pw, ph = 0.9, 1.4
 	}
-	p.draw(ellipse{ex, ey, rx, ry, 0}, eyeT, opts{})
-	p.draw(ellipse{ex + gx*1.3, ey + gy*1.1, pr, math.Min(ry-0.5, pr*1.35), 0}, tones{cPupil, cPupil, cPupil}, opts{noOutline: true})
+	p.draw(ellipse{ex, ey, rx, ry, slant}, eyeT, opts{})
+	p.draw(ellipse{ex + gx*1.2, ey + gy*0.5, pw, ph, 0}, tones{cPupil, cPupil, cPupil}, opts{noOutline: true})
 	if kind != eyesSleepy {
-		// два блика: крупный сверху слева и маленький снизу справа
-		p.dot(ex-2+gx*0.6, ey-2.8, cWhite)
-		p.dot(ex-1+gx*0.6, ey-2.8, cWhite)
-		p.dot(ex-2+gx*0.6, ey-1.8, cWhite)
-		p.dot(ex-1+gx*0.6, ey-1.8, cWhite)
-		p.dot(ex+1.4+gx*0.6, ey+2, eyeT[0])
+		p.dot(ex-1.6+gx*0.8, ey-1.2, cWhite) // один маленький блик
 	} else {
 		for dx := -rx; dx <= rx; dx++ { // тяжёлое веко
-			p.dot(ex+dx, ey-ry+1, cOut)
+			p.dot(ex+dx, ey-ry+0.6, cOut)
 		}
 	}
 }
@@ -155,15 +155,15 @@ func (p *painter) collar(cx, cy, rx float64, bell bool) {
 func (p *painter) frontHead(hx, hy float64, f frontP, eyes eyeKind) {
 	ew := f.earsBack
 	// щёчки-бакенбарды
-	p.draw(tri{hx - 16, hy + 1, hx - 22, hy + 9, hx - 12, hy + 10}, furT, opts{})
-	p.draw(tri{hx + 16, hy + 1, hx + 22, hy + 9, hx + 12, hy + 10}, furT, opts{})
+	p.draw(tri{hx - 14.5, hy + 1, hx - 20, hy + 9, hx - 11, hy + 10}, furT, opts{})
+	p.draw(tri{hx + 14.5, hy + 1, hx + 20, hy + 9, hx + 11, hy + 10}, furT, opts{})
 	// уши
-	p.draw(tri{hx - 15.5, hy - 5, hx - 17 + f.earL - ew, hy - 21 + ew*2, hx - 3, hy - 11}, furT, opts{})
-	p.draw(tri{hx + 15.5, hy - 5, hx + 17 + f.earR + ew, hy - 21 + ew*2, hx + 3, hy - 11}, furT, opts{})
-	p.draw(tri{hx - 13.2, hy - 7.5, hx - 14.4 + f.earL - ew, hy - 17 + ew*2, hx - 6, hy - 11}, earT, opts{noOutline: true})
-	p.draw(tri{hx + 13.2, hy - 7.5, hx + 14.4 + f.earR + ew, hy - 17 + ew*2, hx + 6, hy - 11}, earT, opts{noOutline: true})
+	p.draw(tri{hx - 14, hy - 4, hx - 15.5 + f.earL - ew, hy - 20 + ew*2, hx - 3, hy - 10}, furT, opts{})
+	p.draw(tri{hx + 14, hy - 4, hx + 15.5 + f.earR + ew, hy - 20 + ew*2, hx + 3, hy - 10}, furT, opts{})
+	p.draw(tri{hx - 11.8, hy - 6.4, hx - 13 + f.earL - ew, hy - 16 + ew*2, hx - 5.6, hy - 10}, earT, opts{noOutline: true})
+	p.draw(tri{hx + 11.8, hy - 6.4, hx + 13 + f.earR + ew, hy - 16 + ew*2, hx + 5.6, hy - 10}, earT, opts{noOutline: true})
 	// голова: полоски на лбу и щеках
-	head := ellipse{hx, hy, 17, 13.5, 0}
+	head := ellipse{hx, hy, 15.5, 12.5, 0}
 	p.draw(head, furT, opts{over: func(x, y float64, tone int) (color.NRGBA, bool) {
 		u, v := head.uv(x, y)
 		if v < -0.35 && v > -0.97 {
@@ -176,16 +176,21 @@ func (p *painter) frontHead(hx, hy float64, f frontP, eyes eyeKind) {
 		}
 		return color.NRGBA{}, false
 	}})
-	// светлые «брови» над глазами и белая мордочка
-	for _, sx := range []float64{-1, 1} {
-		p.line(hx+sx*10, hy-5, hx+sx*7.5, hy-5, cCreamBrow)
-	}
-	p.draw(ellipse{hx, hy + 7.5, 8, 5.4, 0}, creamT, opts{noOutline: true})
+	// белая мордочка с подушечками для усов
+	p.draw(ellipse{hx - 3.2, hy + 7.4, 5, 4.2, 0}, creamT, opts{noOutline: true})
+	p.draw(ellipse{hx + 3.2, hy + 7.4, 5, 4.2, 0}, creamT, opts{noOutline: true})
+	p.draw(ellipse{hx, hy + 6.2, 4, 3.4, 0}, creamT, opts{noOutline: true})
 	// глаза
-	p.eye(hx-8, hy+0.5, eyes, f.gaze, f.gazeY)
-	p.eye(hx+8, hy+0.5, eyes, f.gaze, f.gazeY)
-	// носик и ротик «w»
-	p.draw(tri{hx - 2.2, hy + 4, hx + 2.2, hy + 4, hx, hy + 6.6}, tones{cNose, cNose, cNose}, opts{noOutline: true})
+	p.eye(hx-7.4, hy+1, eyes, f.gaze, f.gazeY, 0.3)
+	p.eye(hx+7.4, hy+1, eyes, f.gaze, f.gazeY, -0.3)
+	// тёмные «стрелки» от внешних уголков глаз — как у настоящих полосатых кошек
+	for _, sx := range []float64{-1, 1} {
+		p.line(hx+sx*11, hy+0.6, hx+sx*14, hy+2.2, stripeT[2])
+		p.line(hx+sx*11, hy+4.2, hx+sx*14, hy+5.4, stripeT[1])
+	}
+	// носик и ротик
+	p.draw(tri{hx - 2.8, hy + 4, hx + 2.8, hy + 4, hx, hy + 7}, tones{cNose, cNose, cNose}, opts{noOutline: true})
+	p.dot(hx-0.5, hy+4.2, nrgb(0xff, 0xc4, 0xcc))
 	if f.mouth > 0.05 {
 		o := 1 + f.mouth*4.5
 		p.draw(ellipse{hx, hy + 9 + o*0.35, 3.8, o, 0}, tones{cMouth, cMouth, cMouth}, opts{noOutline: true})
@@ -195,11 +200,11 @@ func (p *painter) frontHead(hx, hy float64, f frontP, eyes eyeKind) {
 		p.dot(hx-2.5, hy+8, cWhite) // клычки
 		p.dot(hx+1.5, hy+8, cWhite)
 	} else {
-		p.line(hx, hy+6.6, hx, hy+8.2, cOut)
-		p.line(hx, hy+8.2, hx-3, hy+9.6, cOut)
-		p.line(hx, hy+8.2, hx+3, hy+9.6, cOut)
-		p.dot(hx-4, hy+9, cOut)
-		p.dot(hx+3, hy+9, cOut)
+		p.line(hx, hy+7, hx, hy+8.4, cOut)
+		p.line(hx, hy+8.4, hx-3, hy+9.8, cOut)
+		p.line(hx, hy+8.4, hx+3, hy+9.8, cOut)
+		p.dot(hx-4, hy+9.2, cOut)
+		p.dot(hx+3, hy+9.2, cOut)
 		if f.tongue {
 			p.dot(hx, hy+10, cTongue)
 			p.dot(hx, hy+11, cTongue)
@@ -445,7 +450,7 @@ func (p *painter) drawSide(s sideP) {
 	p.draw(ellipse{mx, my, 6.6, 5, s.tilt}, creamT, opts{})
 	// глаз, нос, рот, усы
 	exx, eyy := hp(5.6, -1)
-	p.eye(exx, eyy, s.eyes, s.gx, s.gy)
+	p.eye(exx, eyy, s.eyes, s.gx, s.gy, 0.15)
 	bx3, by3 := hp(4, -6.4)
 	p.dot(bx3, by3, cCreamBrow)
 	p.dot(bx3+1, by3, cCreamBrow)
@@ -535,8 +540,8 @@ func (p *painter) drawSleep(breath float64) {
 		return color.NRGBA{}, false
 	}})
 	p.draw(ellipse{hx + 5, hy + 4.6, 7, 4.8, 0}, creamT, opts{noOutline: true})
-	p.eye(hx-3, hy+0.5, eyesClosed, 0, 0)
-	p.eye(hx+6, hy+0.5, eyesClosed, 0, 0)
+	p.eye(hx-3, hy+0.5, eyesClosed, 0, 0, 0)
+	p.eye(hx+6, hy+0.5, eyesClosed, 0, 0, 0)
 	p.draw(ellipse{hx + 9, hy + 3.6, 1.9, 1.4, 0}, tones{cNose, cNose, cNose}, opts{noOutline: true})
 	p.line(hx+7.2, hy+6.6, hx+10, hy+6.6, cOut)
 }
