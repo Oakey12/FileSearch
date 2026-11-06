@@ -182,6 +182,9 @@ func (p *painter) toLocal(px, py int) (x, y float64) {
 // opts — как красить фигуру.
 type opts struct {
 	noOutline bool
+	// skipOutline — не обводить там, где пиксель лежит внутри этой фигуры: так лапа
+	// «вырастает» из туловища без шва.
+	skipOutline shape
 	// over может подменить цвет пикселя (полоски, светлое брюшко); tone — тон фигуры.
 	over func(x, y float64, tone int) (color.NRGBA, bool)
 }
@@ -218,6 +221,11 @@ func (p *painter) draw(s shape, t tones, o opts) {
 		for y := cy0; y <= cy1; y++ {
 			for x := cx0; x <= cx1; x++ {
 				if !at(x, y) && (at(x-1, y) || at(x+1, y) || at(x, y-1) || at(x, y+1)) {
+					if o.skipOutline != nil {
+						if lxp, lyp := p.toLocal(x, y); o.skipOutline.in(lxp, lyp) {
+							continue
+						}
+					}
 					p.c.set(x, y, cOut)
 				}
 			}

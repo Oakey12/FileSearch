@@ -180,13 +180,13 @@ func (c *Cat) sideParams() sideP {
 	case Walk:
 		switch c.gait {
 		case gStride:
-			s.hindN, s.hindF, s.frontN, s.frontF = gaitFeet(8, 5, c.Phase)
-			s.bodyY = 0.9 * math.Sin(4*math.Pi*c.Phase)
+			s.hindN, s.hindF, s.frontN, s.frontF = gaitFeet(6, 4, c.Phase)
+			s.bodyY = -0.6 + 0.8*math.Sin(4*math.Pi*c.Phase)
 			s.headDY = 0.9 * math.Sin(4*math.Pi*c.Phase+1)
 			s.tail = tailP{a0: -2.0, curl: 1.7, amp: 0.55, phase: t * 0.14}
 		case gTrot:
-			s.hindN, s.hindF, s.frontN, s.frontF = gaitFeet(11, 7, c.Phase)
-			s.bodyY = 1.4 * math.Sin(4*math.Pi*c.Phase)
+			s.hindN, s.hindF, s.frontN, s.frontF = gaitFeet(8.5, 5.5, c.Phase)
+			s.bodyY = -0.8 + 1.1*math.Sin(4*math.Pi*c.Phase)
 			s.headDY = 1.2 * math.Sin(4*math.Pi*c.Phase+1)
 			s.pitch = -0.03
 			s.tail = tailP{a0: -1.8, curl: 1.3, amp: 0.7, phase: t * 0.28}
@@ -222,8 +222,8 @@ func (c *Cat) sideParams() sideP {
 		k := math.Sin(math.Pi * math.Min(1, float64(c.ModeTick)/56))
 		s.pitch = 0.32 * k
 		s.bodyY = -2 * k
-		s.frontN = foot{44 + 14*k, groundFoot}
-		s.frontF = foot{38 + 14*k, groundFoot}
+		s.frontN = foot{44 + 11*k, groundFoot}
+		s.frontF = foot{38 + 11*k, groundFoot}
 		s.headDY = 4 * k
 		s.eyes = eyesClosed
 		s.mouth = clamp((k-0.5)*2, 0, 1)
@@ -235,24 +235,24 @@ func (c *Cat) sideParams() sideP {
 		s.mouth = 0.4
 		s.tail = tailP{a0: -1.7, curl: 0.2, amp: 0.4, phase: t * 0.4}
 	case Land:
-		s.bodyY = 6
-		s.hindN, s.hindF = foot{10, groundFoot}, foot{18, groundFoot}
-		s.frontN, s.frontF = foot{50, groundFoot}, foot{42, groundFoot}
+		s.bodyY = 4
+		s.hindN, s.hindF = foot{12, groundFoot}, foot{19, groundFoot}
+		s.frontN, s.frontF = foot{47, groundFoot}, foot{41, groundFoot}
 		s.eyes = eyesWide
 		s.tail = tailP{a0: -2.4, curl: 0.6, amp: 0.3, phase: t * 0.2}
 	case Play:
 		switch c.phase {
 		case chase:
-			s.hindN, s.hindF, s.frontN, s.frontF = gaitFeet(12, 9, c.Phase)
+			s.hindN, s.hindF, s.frontN, s.frontF = gaitFeet(9, 7, c.Phase)
 			s.bodyY = 1.8 * math.Sin(4*math.Pi*c.Phase)
 			s.pitch = -0.04
 			s.eyes = eyesWide
 			s.earsBack = 0.5
 			s.tail = tailP{a0: -1.8, curl: 0.6, amp: 0.6, phase: t * 0.4}
 		case stalk:
-			s.bodyY = 9 + 0.7*math.Sin(t*0.6)
-			s.hindN, s.hindF = foot{12, groundFoot}, foot{19, groundFoot}
-			s.frontN, s.frontF = foot{46, groundFoot}, foot{39, groundFoot}
+			s.bodyY = 6 + 0.6*math.Sin(t*0.6)
+			s.hindN, s.hindF = foot{14, groundFoot}, foot{20, groundFoot}
+			s.frontN, s.frontF = foot{44, groundFoot}, foot{38, groundFoot}
 			s.headDY = 4
 			s.eyes = eyesWide
 			s.earsBack = 0.7
