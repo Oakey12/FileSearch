@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"math/rand"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -183,7 +184,17 @@ func TestDumpPNG(t *testing.T) {
 		{"carried", func(c *Cat) { c.setMode(Carried) }},
 		{"fall", func(c *Cat) { c.setMode(Fall); c.Lift = 30 }},
 	}
-	const cols = 3
+	// CAT_ONLY=sit,walk0 — только эти позы (удобно смотреть вблизи)
+	if only := os.Getenv("CAT_ONLY"); only != "" {
+		var keep []shot
+		for _, s := range shots {
+			if strings.Contains(","+only+",", ","+s.name+",") {
+				keep = append(keep, s)
+			}
+		}
+		shots = keep
+	}
+	cols := min(3, len(shots))
 	rows := (len(shots) + cols - 1) / cols
 	sheet := image.NewNRGBA(image.Rect(0, 0, ViewW*cols, ViewH*rows))
 	draw.Draw(sheet, sheet.Bounds(), image.NewUniform(nrgbaGray), image.Point{}, draw.Src)

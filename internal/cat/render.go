@@ -87,210 +87,35 @@ func clamp(x, lo, hi float64) float64 { return math.Max(lo, math.Min(hi, x)) }
 
 func ease(u float64) float64 { return u * u * (3 - 2*u) }
 
-func (c *Cat) eyesFor() eyeKind {
-	if c.blink > 0 {
-		return eyesClosed
-	}
-	return eyesOpen
-}
+// foot — куда ставится лапа (пиксели спрайта).
+type foot struct{ X, Y float64 }
 
-func (c *Cat) frontParams() frontP {
-	t := float64(c.Tick)
-	f := frontP{
-		breath: math.Sin(t * 0.12),
-		gaze:   c.Gaze,
-		gazeY:  c.GazeY,
-		eyes:   c.eyesFor(),
-		tail:   tailP{a0: 0.15, curl: -2.3, amp: 0.2, phase: t * 0.08},
-		tilt:   c.Gaze * 1.5,
-	}
-	if c.happy > 0 {
-		f.eyes = eyesHappy
-		f.tongue = c.happy%12 < 6
-		f.tail.amp = 0.8
-		f.tail.phase = t * 0.4
-	}
-	if c.earL > 0 {
-		f.earL = math.Sin(float64(c.earL)*1.3) * 2.4
-	}
-	if c.earR > 0 {
-		f.earR = -math.Sin(float64(c.earR)*1.3) * 2.4
-	}
-	switch c.Mode {
-	case Sit:
-		switch c.event {
-		case evWag:
-			f.tail = tailP{a0: 0.1, curl: -1.6, amp: 1.0, phase: t * 0.5}
-		case evButterfly:
-			if c.evTick > 15 && c.evTick < 330 && c.happy == 0 {
-				f.eyes = eyesWide
-				if c.blink > 0 {
-					f.eyes = eyesClosed
-				}
-			}
-			f.earsBack = -0.3
-		}
-	case Wash:
-		f.eyes = eyesClosed
-		f.pawUp = ease(clamp(float64(c.ModeTick)/10, 0, 1)) * ease(clamp(float64(100-c.ModeTick)/10, 0, 1))
-		f.pawWiggle = t * 0.7
-		f.headDown = 2 * f.pawUp
-		f.tongue = (c.Tick/5)%2 == 0 && f.pawUp > 0.9
-	case Yawn:
-		k := math.Sin(math.Pi * math.Min(1, float64(c.ModeTick)/36))
-		f.eyes = eyesClosed
-		f.mouth = k
-		f.headDown = -2 * k
-		f.earsBack = k * 1.4
-	case Carried:
-		f.hang = true
-		f.hangSway = c.Sway
-		f.hangStep = c.Tick / 3
-	}
-	return f
-}
-
+// footAt — где стопа в фазе шага ph: 60% времени стоит на полу и едет назад
+// относительно тела, остальное время поднимается и переносится вперёд.
 func footAt(joint, s, lift, ph float64) foot {
+	ground := float64(boxH - 1)
 	t := math.Mod(ph, 1)
 	if t < 0 {
 		t++
 	}
 	if t < 0.6 {
-		return foot{joint + s*(1-2*t/0.6), groundFoot}
+		return foot{joint + s*(1-2*t/0.6), ground}
 	}
 	u := (t - 0.6) / 0.4
-	return foot{joint - s + 2*s*ease(u), groundFoot - lift*math.Sin(math.Pi*u)}
+	return foot{joint - s + 2*s*ease(u), ground - lift*math.Sin(math.Pi*u)}
 }
-
-// gaitFeet — четыре лапы шагающего кота; диагональные пары ходят вместе.
-func gaitFeet(s, lift, ph float64) (hindN, hindF, frontN, frontF foot) {
-	const hj, fj = 16.0, 41.0
-	return footAt(hj, s, lift, ph+0.5), footAt(hj+3, s, lift, ph), footAt(fj, s, lift, ph), footAt(fj-3, s, lift, ph+0.5)
-}
-
-func standFeet() (hindN, hindF, frontN, frontF foot) {
-	return foot{16, groundFoot}, foot{21, groundFoot}, foot{44, groundFoot}, foot{38, groundFoot}
-}
-
-func (c *Cat) sideParams() sideP {
-	t := float64(c.Tick)
-	s := sideP{eyes: c.eyesFor(), tail: tailP{a0: -2.0, curl: 1.6, amp: 0.45, phase: t * 0.15}}
-	s.hindN, s.hindF, s.frontN, s.frontF = standFeet()
-	switch c.Mode {
-	case Walk:
-		switch c.gait {
-		case gStride:
-			s.hindN, s.hindF, s.frontN, s.frontF = gaitFeet(6, 4, c.Phase)
-			s.bodyY = -0.6 + 0.8*math.Sin(4*math.Pi*c.Phase)
-			s.headDY = 0.9 * math.Sin(4*math.Pi*c.Phase+1)
-			s.tail = tailP{a0: -2.0, curl: 1.7, amp: 0.55, phase: t * 0.14}
-		case gTrot:
-			s.hindN, s.hindF, s.frontN, s.frontF = gaitFeet(8.5, 5.5, c.Phase)
-			s.bodyY = -0.8 + 1.1*math.Sin(4*math.Pi*c.Phase)
-			s.headDY = 1.2 * math.Sin(4*math.Pi*c.Phase+1)
-			s.pitch = -0.03
-			s.tail = tailP{a0: -1.8, curl: 1.3, amp: 0.7, phase: t * 0.28}
-			s.earsBack = 0.5
-		case gHop:
-			s.hindN, s.hindF = foot{10, groundFoot - 9}, foot{16, groundFoot - 11}
-			s.frontN, s.frontF = foot{50, groundFoot - 8}, foot{44, groundFoot - 10}
-			s.pitch = -0.1
-			s.eyes = eyesWide
-			if c.blink > 0 {
-				s.eyes = eyesClosed
-			}
-			s.tail = tailP{a0: -1.8, curl: 0.6, amp: 0.3, phase: t * 0.3}
-		case gSniff:
-			s.pitch = 0.1
-			s.bodyY = 1
-			s.headDY = 15 + 1.4*math.Sin(t*0.55)
-			s.headDX = 3 + 1.5*math.Sin(t*0.3)
-			s.tilt = 0.35
-			s.tail = tailP{a0: -2.0, curl: 1.2, amp: 0.4, phase: t * 0.1}
-		case gLookUp:
-			s.headDY = -4
-			s.headDX = -1
-			s.tilt = -0.35
-			s.eyes = eyesWide
-			if c.blink > 0 {
-				s.eyes = eyesClosed
-			}
-			s.gy = -1
-			s.tail = tailP{a0: -2.2, curl: 1.0, amp: 0.8, phase: t * 0.22}
-		}
-	case Stretch:
-		k := math.Sin(math.Pi * math.Min(1, float64(c.ModeTick)/56))
-		s.pitch = 0.32 * k
-		s.bodyY = -2 * k
-		s.frontN = foot{44 + 11*k, groundFoot}
-		s.frontF = foot{38 + 11*k, groundFoot}
-		s.headDY = 4 * k
-		s.eyes = eyesClosed
-		s.mouth = clamp((k-0.5)*2, 0, 1)
-		s.tail = tailP{a0: -1.8, curl: 0.3, amp: 0.15, phase: t * 0.1}
-	case Fall:
-		s.hindN, s.hindF = foot{6, groundFoot - 20}, foot{12, groundFoot - 22}
-		s.frontN, s.frontF = foot{54, groundFoot - 16}, foot{48, groundFoot - 19}
-		s.eyes = eyesWide
-		s.mouth = 0.4
-		s.tail = tailP{a0: -1.7, curl: 0.2, amp: 0.4, phase: t * 0.4}
-	case Land:
-		s.bodyY = 4
-		s.hindN, s.hindF = foot{12, groundFoot}, foot{19, groundFoot}
-		s.frontN, s.frontF = foot{47, groundFoot}, foot{41, groundFoot}
-		s.eyes = eyesWide
-		s.tail = tailP{a0: -2.4, curl: 0.6, amp: 0.3, phase: t * 0.2}
-	case Play:
-		switch c.phase {
-		case chase:
-			s.hindN, s.hindF, s.frontN, s.frontF = gaitFeet(9, 7, c.Phase)
-			s.bodyY = 1.8 * math.Sin(4*math.Pi*c.Phase)
-			s.pitch = -0.04
-			s.eyes = eyesWide
-			s.earsBack = 0.5
-			s.tail = tailP{a0: -1.8, curl: 0.6, amp: 0.6, phase: t * 0.4}
-		case stalk:
-			s.bodyY = 6 + 0.6*math.Sin(t*0.6)
-			s.hindN, s.hindF = foot{14, groundFoot}, foot{20, groundFoot}
-			s.frontN, s.frontF = foot{44, groundFoot}, foot{38, groundFoot}
-			s.headDY = 4
-			s.eyes = eyesWide
-			s.earsBack = 0.7
-			s.tail = tailP{a0: -2.9, curl: 0.5, amp: 0.9, phase: t * 0.5}
-		case leap:
-			s.pitch = -0.28
-			s.hindN, s.hindF = foot{2, groundFoot - 9}, foot{9, groundFoot - 12}
-			s.frontN, s.frontF = foot{58, groundFoot - 14}, foot{52, groundFoot - 17}
-			s.eyes = eyesWide
-			s.mouth = 0.25
-			s.earsBack = 0.8
-			s.tail = tailP{a0: -2.9, curl: 0.2, amp: 0.15, phase: t * 0.3}
-		default:
-			s.eyes = eyesWide
-			if c.blink > 0 {
-				s.eyes = eyesClosed
-			}
-			s.tail = tailP{a0: -2.1, curl: 1.0, amp: 0.8, phase: t * 0.3}
-		}
-	}
-	return s
-}
-
-// ---------- кадр целиком ----------
-
-var zRows = [5]string{"#####", "...#.", "..#..", ".#...", "#####"}
 
 // Render рисует кота на холсте. view — левый край окна в пикселях мира.
 func Render(c *Canvas, cat *Cat, view float64) {
 	c.Clear()
+	f, mirror := spriteFrame(cat)
 	if cat.Mode == Carried {
-		p := &painter{c: c, ox: math.Round(Anchor.X - Scruff.X), oy: math.Round(Anchor.Y - Scruff.Y), width: SprW}
-		p.drawFront(cat.frontParams())
+		f.blit(c, math.Round(Anchor.X-Scruff.X), math.Round(Anchor.Y-Scruff.Y), false)
 		// кулак, который держит загривок
 		fx, fy := int(Anchor.X)-7, int(Anchor.Y)-9
 		c.fill(fx-1, fy-1, 16, 11, cOut, 1)
-		c.fill(fx, fy, 14, 9, cFist, 1)
-		c.fill(fx+1, fy+1, 12, 2, creamT[0], 1)
+		c.fill(fx, fy, 14, 9, nrgb(0xf3, 0xd2, 0xb3), 1)
+		c.fill(fx+1, fy+1, 12, 2, nrgb(0xff, 0xf0, 0xe0), 1)
 		for i := 0; i < 3; i++ {
 			c.fill(fx+3+i*4, fy+3, 1, 5, nrgb(0xd9, 0xb0, 0x8a), 1)
 		}
@@ -311,23 +136,10 @@ func Render(c *Canvas, cat *Cat, view float64) {
 		c.fill(x+3, y-1, 1, 1, prc, a)
 	}
 	// мягкая тень под котом
-	shw := 28.0
-	if cat.Mode == Sleep {
-		shw = 34
-	}
-	shw *= math.Max(0.4, 1-cat.Lift/90)
-	c.ell(ox+SprW/2, float64(GroundY)+1, shw, 3, nrgb(0, 0, 0), 0.26*math.Max(0.4, 1-cat.Lift/90))
+	k := math.Max(0.4, 1-cat.Lift/90)
+	c.ell(ox+SprW/2, float64(GroundY)+1, 24*k, 3, nrgb(0, 0, 0), 0.24*k)
 
-	p := &painter{c: c, ox: ox, oy: oy, mirror: cat.Facing < 0, width: SprW}
-	switch cat.Mode {
-	case Sit, Wash, Yawn:
-		p.mirror = false
-		p.drawFront(cat.frontParams())
-	case Sleep:
-		p.drawSleep(math.Sin(float64(cat.Tick) * 0.1))
-	default:
-		p.drawSide(cat.sideParams())
-	}
+	f.blit(c, ox, oy, mirror)
 	if cat.Ball != nil {
 		drawBall(c, cat.Ball.X-view)
 	}
@@ -407,3 +219,5 @@ func drawZzz(c *Canvas, ox, oy float64, tick int) {
 		}
 	}
 }
+
+var zRows = [5]string{"#####", "...#.", "..#..", ".#...", "#####"}
